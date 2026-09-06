@@ -1,0 +1,20 @@
+name: "Family Ops GitHub Runner"
+description: "Dedicated GitHub Actions self-hosted runner for the private family-ops repository"
+version: "0.2.0"
+slug: "family_ops_github_runner"
+init: false
+arch:
+  - aarch64
+hassio_api: true
+options:
+  repo_url: "https://github.com/azwanmuslim/family-ops"
+  registration_token: ""
+  runner_name: "ha-rpi4-family-ops"
+  labels: "home-assistant,rpi4,family-ops"
+schema:
+  repo_url: url
+  registration_token: password
+  runner_name: str
+  labels: str
+startup: application
+boot: auto
