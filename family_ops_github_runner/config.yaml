@@ -1,11 +1,12 @@
 name: "Family Ops GitHub Runner"
 description: "Dedicated GitHub Actions self-hosted runner for the private family-ops repository"
-version: "0.2.0"
+version: "0.2.1"
 slug: "family_ops_github_runner"
 init: false
 arch:
   - aarch64
 hassio_api: true
+hassio_role: manager
 options:
   repo_url: "https://github.com/azwanmuslim/family-ops"
   registration_token: ""
