@@ -20,10 +20,6 @@ fi
 cd "$RUNNER_DIR"
 export RUNNER_ALLOW_RUNASROOT=1
 
-# If a new registration token is supplied, treat it as an explicit request to
-# refresh the persisted runner identity once. This avoids stale .runner /
-# .credentials files causing "A session for this runner already exists" after
-# the runner was deleted/re-created in GitHub.
 if [[ -n "$registration_token" && "$registration_token" != "null" ]]; then
   current_hash="$(printf '%s' "$registration_token" | sha256sum | awk '{print $1}')"
   saved_hash=""
@@ -61,8 +57,18 @@ fi
 
 unset registration_token
 
+watcher_pid=''
+if [[ "$(jq -r '.memory_watch_enabled // true' "$CONFIG")" == "true" ]]; then
+  echo "Starting local memory watcher..."
+  /memory_watcher.sh &
+  watcher_pid=$!
+fi
+
 cleanup() {
-  echo "Stopping GitHub runner..."
+  echo "Stopping Family Ops services..."
+  if [[ -n "$watcher_pid" ]]; then
+    kill "$watcher_pid" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
