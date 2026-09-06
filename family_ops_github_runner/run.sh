@@ -4,6 +4,7 @@ set -euo pipefail
 CONFIG=/data/options.json
 RUNNER_DIR=/data/actions-runner
 TEMPLATE=/opt/actions-runner-template
+TOKEN_HASH_FILE=/data/registration-token.sha256
 
 repo_url="$(jq -r '.repo_url' "$CONFIG")"
 registration_token="$(jq -r '.registration_token' "$CONFIG")"
@@ -19,9 +20,26 @@ fi
 cd "$RUNNER_DIR"
 export RUNNER_ALLOW_RUNASROOT=1
 
+# If a new registration token is supplied, treat it as an explicit request to
+# refresh the persisted runner identity once. This avoids stale .runner /
+# .credentials files causing "A session for this runner already exists" after
+# the runner was deleted/re-created in GitHub.
+if [[ -n "$registration_token" && "$registration_token" != "null" ]]; then
+  current_hash="$(printf '%s' "$registration_token" | sha256sum | awk '{print $1}')"
+  saved_hash=""
+  if [[ -f "$TOKEN_HASH_FILE" ]]; then
+    saved_hash="$(cat "$TOKEN_HASH_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ "$current_hash" != "$saved_hash" ]]; then
+    echo "New registration token detected; refreshing persisted runner identity."
+    rm -f .runner .credentials .credentials_rsaparams .service
+  fi
+fi
+
 if [[ ! -f .runner ]]; then
   if [[ -z "$registration_token" || "$registration_token" == "null" ]]; then
-    echo "ERROR: registration_token is required for first-time registration."
+    echo "ERROR: registration_token is required for first-time registration or registration reset."
     echo "Generate one in GitHub: repository Settings > Actions > Runners > New self-hosted runner."
     exit 1
   fi
@@ -35,6 +53,8 @@ if [[ ! -f .runner ]]; then
     --work _work \
     --unattended \
     --replace
+
+  printf '%s' "$current_hash" > "$TOKEN_HASH_FILE"
 else
   echo "Runner already registered; using persisted configuration."
 fi
