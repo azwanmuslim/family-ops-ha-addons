@@ -10,6 +10,7 @@ repo_url="$(jq -r '.repo_url' "$CONFIG")"
 registration_token="$(jq -r '.registration_token' "$CONFIG")"
 runner_name="$(jq -r '.runner_name' "$CONFIG")"
 labels="$(jq -r '.labels' "$CONFIG")"
+runner_start_delay="$(jq -r '.runner_start_delay_seconds // 60' "$CONFIG")"
 
 mkdir -p "$RUNNER_DIR"
 
@@ -72,4 +73,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# GitHub can keep the previous self-hosted runner session alive briefly while
+# Home Assistant replaces/restarts the add-on container. Let that stale session
+# expire before reconnecting with the persisted runner identity. The local
+# memory watcher starts immediately, so monitoring is not paused during this wait.
+if [[ "$runner_start_delay" =~ ^[0-9]+$ ]] && (( runner_start_delay > 0 )); then
+  echo "Waiting ${runner_start_delay}s for previous GitHub runner session to release..."
+  sleep "$runner_start_delay"
+fi
+
+echo "Starting GitHub Actions runner..."
 exec ./run.sh
