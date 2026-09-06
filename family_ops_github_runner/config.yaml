@@ -1,21 +1,30 @@
 name: "Family Ops GitHub Runner"
 description: "Dedicated GitHub Actions self-hosted runner for the private family-ops repository"
-version: "0.2.2"
+version: "0.3.0"
 slug: "family_ops_github_runner"
 init: false
 arch:
   - aarch64
 hassio_api: true
 hassio_role: manager
+homeassistant_api: true
 options:
   repo_url: "https://github.com/azwanmuslim/family-ops"
   registration_token: ""
   runner_name: "ha-rpi4-family-ops"
   labels: "home-assistant,rpi4,family-ops"
+  memory_watch_enabled: true
+  memory_watch_interval_seconds: 30
+  memory_high_threshold: 85
+  memory_recovery_threshold: 70
 schema:
   repo_url: url
   registration_token: password
   runner_name: str
   labels: str
+  memory_watch_enabled: bool
+  memory_watch_interval_seconds: int(10,300)
+  memory_high_threshold: int(50,99)
+  memory_recovery_threshold: int(20,95)
 startup: application
 boot: auto
