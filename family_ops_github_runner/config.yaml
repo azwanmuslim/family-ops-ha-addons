@@ -1,6 +1,6 @@
 name: "Family Ops GitHub Runner"
 description: "Dedicated GitHub Actions self-hosted runner for the private family-ops repository"
-version: "0.3.0"
+version: "0.3.1"
 slug: "family_ops_github_runner"
 init: false
 arch:
@@ -13,6 +13,7 @@ options:
   registration_token: ""
   runner_name: "ha-rpi4-family-ops"
   labels: "home-assistant,rpi4,family-ops"
+  runner_start_delay_seconds: 60
   memory_watch_enabled: true
   memory_watch_interval_seconds: 30
   memory_high_threshold: 85
@@ -22,6 +23,7 @@ schema:
   registration_token: password
   runner_name: str
   labels: str
+  runner_start_delay_seconds: int(0,300)
   memory_watch_enabled: bool
   memory_watch_interval_seconds: int(10,300)
   memory_high_threshold: int(50,99)
