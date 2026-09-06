@@ -18,6 +18,7 @@ RUN set -eux; \
     printf '%s' "$latest" > /opt/actions-runner-template/.family_ops_runner_version
 
 COPY run.sh /run.sh
-RUN chmod +x /run.sh
+COPY memory_watcher.sh /memory_watcher.sh
+RUN chmod +x /run.sh /memory_watcher.sh
 
 CMD ["/run.sh"]
