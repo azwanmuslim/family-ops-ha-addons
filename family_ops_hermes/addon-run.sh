@@ -47,6 +47,21 @@ if [ "${CODEX_SMOKE_ONCE:-false}" = "true" ] && [ ! -e /data/.codex_provider_v4_
   fi
 fi
 
+# Query actual authorized Codex model catalogue and test one permitted model.
+# One-time marker prevents repeated API calls across restarts.
+if [ "${CODEX_SMOKE_ONCE:-false}" = "true" ] && [ ! -e /data/.codex_discovery_v5_done ]; then
+  touch /data/.codex_discovery_v5_done
+  chmod 600 /data/.codex_discovery_v5_done
+  echo 'HERMES_CODEX_DISCOVERY_V5: starting'
+  set +e
+  timeout 105s /opt/hermes/.venv/bin/python /codex-model-discovery-v5.py
+  probe_rc=$?
+  set -e
+  if [ "$probe_rc" -ne 0 ]; then
+    echo "HERMES_CODEX_DISCOVERY_V5: diagnostic_error=true return_code=$probe_rc"
+  fi
+fi
+
 if [ "${ENABLE_TERMINAL:-true}" = "true" ]; then
   echo "Starting web terminal on internal port 7681"
   ttyd -W -i 127.0.0.1 -p 7681 -b /terminal bash -l &
