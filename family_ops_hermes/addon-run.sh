@@ -28,7 +28,7 @@ if [ "${CODEX_SMOKE_ONCE:-false}" = "true" ] && [ ! -e /data/.codex_smoke_v2_don
   touch /data/.codex_smoke_v2_done
   chmod 600 /data/.codex_smoke_v2_done
   set +e
-  timeout 100s /opt/hermes/.venv/bin/hermes chat --oneshot -q \
+  timeout 100s /opt/hermes/.venv/bin/hermes -z \
     'Reply with exactly CODEX_READY and nothing else. Do not use tools.' \
     > /tmp/hermes-codex-v2-private.log 2>&1
   smoke_exit=$?
