@@ -33,6 +33,20 @@ if [ "${CODEX_SMOKE_ONCE:-false}" = "true" ] && [ ! -e /data/.codex_direct_v3_do
   fi
 fi
 
+# Optional one-time fallback model diagnostic. Token and model text stay local.
+if [ "${CODEX_SMOKE_ONCE:-false}" = "true" ] && [ ! -e /data/.codex_provider_v4_done ]; then
+  touch /data/.codex_provider_v4_done
+  chmod 600 /data/.codex_provider_v4_done
+  echo 'HERMES_CODEX_PROVIDER_V4: starting'
+  set +e
+  timeout 105s /opt/hermes/.venv/bin/python /codex-provider-probe-v4.py
+  probe_rc=$?
+  set -e
+  if [ "$probe_rc" -ne 0 ]; then
+    echo "HERMES_CODEX_PROVIDER_V4: diagnostic_error=true return_code=$probe_rc"
+  fi
+fi
+
 if [ "${ENABLE_TERMINAL:-true}" = "true" ]; then
   echo "Starting web terminal on internal port 7681"
   ttyd -W -i 127.0.0.1 -p 7681 -b /terminal bash -l &
