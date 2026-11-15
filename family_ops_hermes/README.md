@@ -4,10 +4,10 @@ Custom Home Assistant OS app, adapted from [diegaccio/ha-hermes-addon](https://g
 
 ## Purpose
 
-- Keep `model.provider: openai-codex` and `model.default: gpt-5.3-codex` across app restarts. No OpenAI API key required.
+- Keep `model.provider: openai-codex` and `model.default: gpt-6.1-sol` across app restarts. No OpenAI API key required.
 - Store OAuth under this app's isolated persistent `/data`, not the existing GitHub runner.
-- Never configure Hermes' Telegram gateway against the Home Assistant bot token: HA owns the incoming updates. Future connection must be implemented via a deliberate HA event/agent bridge.
-- HA access privileges and host-network access are disabled by default.
+- Never configure Hermes' Telegram gateway against the Home Assistant bot token: HA owns incoming updates. v29 provides an opt-in owner-only event bridge instead.
+- The v29 app requests Home Assistant Core API access for its opt-in owner-only bridge; host-network access remains disabled. Treat the injected Supervisor token as an administrator credential.
 - Home Assistant ingress protects the browser terminal; enable it only for device-code login and disable afterward.
 - This is a personal fork; rebase/re-audit before any upstream upgrade.
 
@@ -20,3 +20,12 @@ Custom Home Assistant OS app, adapted from [diegaccio/ha-hermes-addon](https://g
 5. Do not enable Hermes Telegram listener. The existing HA integration stays sole consumer.
 
 For source notes see official [Hermes providers documentation](https://hermes-agent.nousresearch.com/docs/integrations/providers).
+
+## Telegram bridge (v29)
+
+- Leave `ha_telegram_bridge: false` until HA Telegram routing is verified. The bridge uses HA WebSocket `telegram_command`/`telegram_text` events (and the event entity when available) and `telegram_bot.send_message`; it does not run a second Telegram poller.
+- Restrict `ha_telegram_chat_id` and `ha_telegram_user_id` to your owner's private DM. Both must match; never use `ha_telegram_plain_text` until `/ai` is verified.
+- `/ai your message` and `/hermes your message` are the explicit chat commands. With `ha_telegram_plain_text: true`, ordinary non-command owner text is also routed to Hermes; `/ping`, `/status`, `/help` are not intercepted.
+- Inference reuses the pinned Hermes Agent `AIAgent` with all tools disabled during the initial rollout. No devices or automations can be controlled through this bridge yet; future skills need separate review.
+- All local HA and OAuth credentials stay inside add-on storage. The add-on writes sanitized readiness counters to `/data/.ha_telegram_bridge_status.json`, never messages, raw responses, or tokens to logs.
+- Rollback: set `ha_telegram_bridge: false` and restart only this add-on. HA's Telegram integration and existing automations are not altered.
