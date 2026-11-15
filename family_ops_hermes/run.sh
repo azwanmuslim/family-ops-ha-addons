@@ -167,4 +167,19 @@ PY
 )"
 export HA_TELEGRAM_BRIDGE
 
+readarray -t TG_OPTIONS < <("$HERMES_PYTHON" - <<'PY'
+import json
+from pathlib import Path
+options = json.loads(Path("/data/options.json").read_text(encoding="utf-8"))
+print(str(options.get("ha_telegram_chat_id") or "").strip())
+print(str(options.get("ha_telegram_user_id") or "").strip())
+print("true" if options.get("ha_telegram_plain_text") else "false")
+print(str(options.get("model_name") or "gpt-6.1-sol").strip())
+PY
+)
+export HA_TELEGRAM_CHAT_ID="${TG_OPTIONS[0]:-}"
+export HA_TELEGRAM_USER_ID="${TG_OPTIONS[1]:-}"
+export HA_TELEGRAM_PLAIN_TEXT="${TG_OPTIONS[2]:-false}"
+export HA_TELEGRAM_MODEL="${TG_OPTIONS[3]:-gpt-6.1-sol}"
+
 exec /opt/hermes/docker/entrypoint.sh /addon-run.sh
