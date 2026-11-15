@@ -6,8 +6,8 @@ Custom Home Assistant OS app, adapted from [diegaccio/ha-hermes-addon](https://g
 
 - Keep `model.provider: openai-codex` and `model.default: gpt-6.1-sol` across app restarts. No OpenAI API key required.
 - Store OAuth under this app's isolated persistent `/data`, not the existing GitHub runner.
-- Never configure Hermes' Telegram gateway against the Home Assistant bot token: HA owns incoming updates. v34 provides an opt-in owner-only event bridge instead.
-- The v34 app requests Home Assistant Core API access for its opt-in owner-only bridge; host-network access remains disabled. Treat the injected Supervisor token as an administrator credential.
+- Never configure Hermes' Telegram gateway against the Home Assistant bot token: HA owns incoming updates. v35 provides an opt-in owner-only event bridge instead.
+- The v35 app requests Home Assistant Core API access for its opt-in owner-only bridge; host-network access remains disabled. Treat the injected Supervisor token as an administrator credential.
 - Home Assistant ingress protects the browser terminal; enable it only for device-code login and disable afterward.
 - This is a personal fork; rebase/re-audit before any upstream upgrade.
 
@@ -21,7 +21,7 @@ Custom Home Assistant OS app, adapted from [diegaccio/ha-hermes-addon](https://g
 
 For source notes see official [Hermes providers documentation](https://hermes-agent.nousresearch.com/docs/integrations/providers).
 
-## Telegram bridge (v34)
+## Telegram bridge (v35)
 
 - Leave `ha_telegram_bridge: false` until HA Telegram routing is verified. The bridge uses HA WebSocket `telegram_command`/`telegram_text` events (and the event entity when available) and `telegram_bot.send_message`; it does not run a second Telegram poller.
 - Restrict `ha_telegram_chat_id` and `ha_telegram_user_id` to your owner's private DM. Both must match; never use `ha_telegram_plain_text` until `/ai` is verified.
@@ -30,7 +30,7 @@ For source notes see official [Hermes providers documentation](https://hermes-ag
 - All local HA and OAuth credentials stay inside add-on storage. The add-on writes sanitized readiness counters to `/tmp/ha_telegram_bridge_status.json`, never messages, raw responses, or tokens to logs.
 - Rollback: set `ha_telegram_bridge: false` and restart only this add-on. HA's Telegram integration and existing automations are not altered.
 
-## HA tools and proactive monitor (v34)
+## HA tools and proactive monitor (v35)
 
 - **Read-only**: ask "status rumah", "siapa di rumah", "RAM", "CPU", "CCTV", "gate" or "lampu"; /rumah, /ram, /cctv, /gate and /lampu also work.
 - **Control**: only exact-match light/fan ON/OFF, and ALWAYS requires /confirm CODE within 90 seconds. /cancel aborts. No arbitrary Home Assistant services, scripts, covers, locks, alarms, or gate opening are exposed.
@@ -38,7 +38,7 @@ For source notes see official [Hermes providers documentation](https://hermes-ag
 - **Graceful failure**: no guessed live statuses; when HA API is unavailable the assistant says it cannot read data. Telegram /ping, /status, /help and existing automations remain owned by HA.
 - **Safety**: the model does not select service calls or run shell commands. The local policy router checks exact entity domain and name again at the final confirmation step.
 
-## Full Home Assistant entity catalogue (v34)
+## Full Home Assistant entity catalogue (v35)
 
 The owner-only Telegram bridge reads **all currently exposed entity states** live with GET /api/states. No static catalogue: newly added or renamed entities are available automatically. /entities lists domain totals; /entities switch, /entities sensor 2 or /entity switch.doorlamp return current state. Natural BM/English requests such as "Lampu mana menyala?", "Boleh buka lampu pintu luar?" and "Status switch.doorlamp" use the read or confirmation router.
 
