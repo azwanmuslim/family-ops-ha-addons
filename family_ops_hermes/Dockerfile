@@ -24,6 +24,7 @@ ENV HERMES_HOME=/data
 
 COPY ingress.conf /etc/nginx/nginx.conf
 COPY landing.html /usr/share/nginx/html/index.html
+COPY ha-ingress-websocket.js /usr/share/nginx/html/ha-ingress-websocket.js
 COPY addon-run.sh /addon-run.sh
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh /addon-run.sh
