@@ -156,9 +156,11 @@ async def worker(session):
             await send(session, answer)
             COUNTS["replied"] += 1
             status("connected")
+            print("HERMES_HA_TG_BRIDGE: model_reply_sent=true", flush=True)
         except Exception:
             COUNTS["errors"] += 1
             status("connected", "request_failed")
+            print("HERMES_HA_TG_BRIDGE: model_request_failed=true", flush=True)
             with contextlib.suppress(Exception):
                 await send(session, "Maaf, Hermes belum berjaya jawab. Cuba /ai sekali lagi.")
         finally:
