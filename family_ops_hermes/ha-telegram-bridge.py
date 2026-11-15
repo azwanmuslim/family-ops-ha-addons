@@ -170,7 +170,7 @@ async def listen(session):
     delay = 3
     while True:
         try:
-            async with session.ws_connect(WS_URL, heartbeat=30, timeout=aiohttp.ClientTimeout(total=20)) as ws:
+            async with session.ws_connect(WS_URL, heartbeat=30) as ws:
                 challenge = await ws.receive_json()
                 if challenge.get("type") != "auth_required":
                     raise RuntimeError("invalid_ws_handshake")
@@ -204,9 +204,13 @@ async def listen(session):
                     except (ValueError, KeyError, TypeError):
                         continue
             status("reconnecting", "ws_closed")
-        except Exception:
+        except Exception as exc:
             COUNTS["errors"] += 1
             status("reconnecting", "ha_ws_failure")
+            name = type(exc).__name__
+            if name not in {"TypeError", "ValueError", "TimeoutError", "ClientConnectorError", "ClientResponseError", "WSServerHandshakeError", "RuntimeError", "ClientError"}:
+                name = "other"
+            print("HERMES_HA_TG_BRIDGE: reconnect_reason=" + name, flush=True)
         await asyncio.sleep(delay)
         delay = min(delay * 2, 30)
 
@@ -214,6 +218,7 @@ async def listen(session):
 async def main():
     if not TOKEN or not OWNER_CHAT.isdigit() or not OWNER_USER.isdigit():
         status("disabled", "missing_ha_auth_or_owner")
+        print("HERMES_HA_TG_BRIDGE: missing_startup_prerequisite=true", flush=True)
         return
     status("starting")
     timeout = aiohttp.ClientTimeout(total=130)
