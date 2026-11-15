@@ -283,23 +283,42 @@ class HomeTools:
         # A numbered reply selects a candidate, but NEVER performs the action.
         # A second explicit positive acknowledgement is still required.
         selection = self.pending_selection
-        if selection and re.fullmatch(r"[1-9]", lower):
-            self.pending_selection = None
+        if selection:
             if time.monotonic() >= selection["expires"]:
+                self.pending_selection = None
                 return "Pilihan dah tamat. Nyatakan arahan sekali lagi."
-            index = int(lower) - 1
-            if not 0 <= index < len(selection["entities"]):
-                return "Nombor tiada dalam senarai. Nyatakan arahan sekali lagi."
-            entity_id = selection["entities"][index]
-            try:
-                row = await self.entity(session, entity_id)
-                if not self.safe_actuator(entity_id, row):
-                    return "Peranti itu tidak boleh dikawal sekarang."
-            except Exception:
-                return "Gagal semak peranti HA. Tiada arahan dihantar."
-            return self.propose_control(entity_id, row, selection["service"])
-        if self.pending_selection and lower not in ("/cancel", "cancel", "batal", "/batal"):
-            self.pending_selection = None
+            # Telegram user may reply "2", "No 2", "pilihan 2", "#2" or "2.".
+            # Never infer from a message containing MULTIPLE choices.
+            compact = re.sub(r"[ \\t]+", " ", lower).strip()
+            choice_match = re.fullmatch(
+                r"(?:no\\.?|nombor|number|num\\.?|pilihan|option|pilih|yang|#)?\\s*([1-9])[.)]?\\s*",
+                compact,
+            )
+            if choice_match:
+                index = int(choice_match.group(1)) - 1
+                if not 0 <= index < len(selection["entities"]):
+                    return ("Pilihan nombor itu tiada. Balas satu nombor sahaja, "
+                            "atau 'batal' untuk hentikan.")
+                self.pending_selection = None
+                entity_id = selection["entities"][index]
+                try:
+                    row = await self.entity(session, entity_id)
+                    if not self.safe_actuator(entity_id, row):
+                        return "Peranti itu tidak boleh dikawal sekarang."
+                except Exception:
+                    return "Gagal semak peranti HA. Tiada arahan dihantar."
+                return self.propose_control(entity_id, row, selection["service"])
+            if re.search(r"\\d", lower):
+                return ("Aku nampak nombor pilihan yang tak jelas. "
+                        "Balas SATU nombor sahaja, contoh '2' atau 'No 2'. "
+                        "Pilihan asal masih tersedia.")
+            if lower not in ("/cancel", "cancel", "batal", "/batal"):
+                self.pending_selection = None
+        # While a control is awaiting YES, an accidental extra digit must not
+        # cancel that approval or become a free-form model hallucination.
+        if self.pending and re.fullmatch(r"(?:no\\.?|nombor|number|num\\.?|pilihan|option|pilih|yang|#)?\\s*[1-9][.)]?", lower.strip()):
+            return ("Aku dah pilih peranti. Untuk teruskan balas 'ok' atau "
+                    "'confirm', atau 'batal' untuk hentikan. Belum ada tindakan dibuat.")
         # A reply to a specific outstanding owner request can be a simple "ok".
         # No other text can approve an action, and no device is changed by a
         # model response. /confirm without a code MUST NOT consume the request.
