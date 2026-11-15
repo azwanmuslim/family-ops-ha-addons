@@ -264,11 +264,13 @@ class HomeTools:
             if key in self.alerted_conditions or now-self.active_conditions[key]<duration:
                 continue
             if self.alert_count >= 3: continue
-            self.alerted_conditions.add(key)
-            self.alert_count += 1
             message=f"🤖 Hermes Alert: {title}\n{description}\nKeadaan berterusan sekurang-kurangnya {duration//60} minit. Semak di HA."
-            try: await self.owner_send(session,message)
-            except Exception: pass
+            try:
+                await self.owner_send(session,message)
+                self.alerted_conditions.add(key)
+                self.alert_count += 1
+            except Exception:
+                pass
 
     async def proactive_loop(self, session):
         await asyncio.sleep(40)
