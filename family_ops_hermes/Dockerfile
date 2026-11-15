@@ -27,6 +27,7 @@ COPY landing.html /usr/share/nginx/html/index.html
 COPY ha-ingress-websocket.js /usr/share/nginx/html/ha-ingress-websocket.js
 COPY addon-run.sh /addon-run.sh
 COPY codex-direct-check.py /codex-direct-check.py
+COPY codex-provider-probe-v4.py /codex-provider-probe-v4.py
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh /addon-run.sh
 
