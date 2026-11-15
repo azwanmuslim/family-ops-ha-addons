@@ -8,12 +8,14 @@
 """
 import asyncio
 import datetime as dt
+import os
 import re
 import secrets
 import time
 from collections import defaultdict
 
 API = "http://supervisor/core/api"
+HEADERS = {"Authorization": "Bearer " + os.environ.get("SUPERVISOR_TOKEN", "")}
 UNSAFE = re.compile(r"(gate|pagar|garage|garaj|autogate|door|pintu|lock|kunci|alarm|security|camera|cctv|nvr|restart|reboot|siren|pump|motor|power|server|wifi|network|router)", re.I)
 WRITE = re.compile(r"^(?:tolong\s+)?(hidupkan|nyalakan|pasang|on|turn on|matikan|padamkan|tutup|off|turn off|buka|open|close|unlock|lock)\s+(.+?)[.!]?$", re.I)
 READ = {
@@ -35,7 +37,7 @@ class HomeTools:
         self.alert_recent = {}
 
     async def states(self, session):
-        async with session.get(API + "/states", timeout=18) as resp:
+        async with session.get(API + "/states", headers=HEADERS, timeout=18) as resp:
             if resp.status != 200:
                 raise RuntimeError("ha_read_unavailable")
             data = await resp.json()
@@ -46,7 +48,7 @@ class HomeTools:
     async def entity(self, session, entity_id):
         if not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", entity_id):
             raise RuntimeError("bad_entity")
-        async with session.get(API + "/states/" + entity_id, timeout=15) as resp:
+        async with session.get(API + "/states/" + entity_id, headers=HEADERS, timeout=15) as resp:
             if resp.status != 200:
                 raise RuntimeError("ha_entity_unavailable")
             data = await resp.json()
@@ -170,7 +172,7 @@ class HomeTools:
                 if UNSAFE.search(entity_id+" "+self.friendly(current)):
                     return "Arahan disekat oleh safety policy."
                 async with session.post(API+"/services/"+domain+"/"+service,
-                    json={"entity_id":entity_id},timeout=20) as resp:
+                    headers=HEADERS, json={"entity_id":entity_id},timeout=20) as resp:
                     if resp.status != 200: return "HA menolak arahan. Tiada pengesahan tindakan."
                     await resp.read()
                 await asyncio.sleep(1)
