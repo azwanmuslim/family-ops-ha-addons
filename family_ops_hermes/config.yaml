@@ -1,5 +1,5 @@
 name: Hermes Personal AI (Codex)
-version: "2026.5.7-21"
+version: "2026.5.7-22"
 slug: family_ops_hermes
 description: Run Hermes Agent as a Home Assistant add-on using the official Hermes image.
 url: https://github.com/NousResearch/hermes-agent
@@ -19,14 +19,15 @@ homeassistant_api: false
 options:
   timezone: Asia/Kuala_Lumpur
   model_provider: openai-codex
-  model_name: gpt-5.3-codex
+  model_name: gpt-5.4
   model_base_url: ""
   openrouter_api_key: ""
   google_api_key: ""
   anthropic_api_key: ""
   openai_api_key: ""
   enable_dashboard_tui: false
-  enable_terminal: true
+  enable_terminal: false
+  codex_smoke_once: false
   gateway_timeout: 1800
 schema:
   timezone: str
@@ -39,4 +40,5 @@ schema:
   openai_api_key: password?
   enable_dashboard_tui: bool?
   enable_terminal: bool?
+  codex_smoke_once: bool?
   gateway_timeout: int(0,86400)?
