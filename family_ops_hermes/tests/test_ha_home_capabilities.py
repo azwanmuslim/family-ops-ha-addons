@@ -84,12 +84,16 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("keselamatan",result)
         self.assertFalse(self.session.calls)
 
-    async def test_wrong_code_consumes_confirmation(self):
+    async def test_wrong_code_does_not_consume_confirmation(self):
         await self.tools.handle(self.session,"matikan lampu ruang tamu")
+        old_pending=self.tools.pending
         result=await self.tools.handle(self.session,"/confirm WRONG")
-        self.assertIn("kod salah",result)
-        self.assertIsNone(self.tools.pending)
+        self.assertIn("Kod tak sepadan",result)
+        self.assertEqual(old_pending,self.tools.pending)
         self.assertFalse(self.session.calls)
+        accepted=await self.tools.handle(self.session,"/confirm")
+        self.assertIn("disahkan HA",accepted)
+        self.assertEqual(len(self.session.calls),1)
 
     async def test_catalog_reads_all_domains(self):
         self.session.rows["lock.smart_lock"]={"entity_id":"lock.smart_lock","state":"locked","attributes":{"friendly_name":"Smart Lock"}}
@@ -136,6 +140,74 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
         for q in ("Buka switch.bothgate","Hidupkan switch.nvr_cam_motion_detection"):
             answer=await self.tools.handle(self.session,q)
             self.assertNotIn("/confirm",answer)
+        self.assertFalse(self.session.calls)
+
+    async def test_bilingual_living_room_switch_disambiguation(self):
+        for eid, name in [
+            ("switch.livingroomlamp1","Living Room Lamp 1"),
+            ("switch.livingroomlamp2","Living Room Lamp 2"),
+            ("switch.livingroom2lamp","Living Room 2 Living Room 2 Lamp"),
+        ]:
+            self.session.rows[eid]={"entity_id":eid,"state":"off","attributes":{"friendly_name":name}}
+        result=await self.tools.handle(self.session,"Hidupkan lampu ruang tamu")
+        self.assertIn("beberapa peranti",result)
+        self.assertIn("switch.livingroomlamp1",result)
+        self.assertIn("switch.livingroomlamp2",result)
+        self.assertIn("switch.livingroom2lamp",result)
+        self.assertFalse(self.session.calls)
+        result=await self.tools.handle(self.session,"Hidupkan Living Room lamp 2")
+        self.assertIn("switch.livingroomlamp2",result)
+        self.assertIsNotNone(self.tools.pending)
+        self.assertEqual(self.tools.pending["entity"],"switch.livingroomlamp2")
+        self.tools.pending=None
+        result=await self.tools.handle(self.session,"Hidupkan living room 2 lamp")
+        self.assertEqual(self.tools.pending["entity"],"switch.livingroom2lamp")
+        self.assertFalse(self.session.calls)
+
+    async def test_simple_positive_acknowledgements(self):
+        self.session.rows["switch.livingroomlamp2"]={
+            "entity_id":"switch.livingroomlamp2","state":"off",
+            "attributes":{"friendly_name":"Living Room Lamp 2"}
+        }
+        for ack in ("ok","yes","confirm","/confirm","ya","boleh","setuju","teruskan","ok boleh"):
+            self.session.rows["switch.livingroomlamp2"]["state"]="off"
+            self.tools.pending=None
+            before=len(self.session.calls)
+            requested=await self.tools.handle(self.session,"Hidupkan living room lamp 2")
+            self.assertIn("Balas ok / yes",requested)
+            self.assertEqual(len(self.session.calls),before)
+            result=await self.tools.handle(self.session,ack)
+            self.assertIn("disahkan HA",result,ack)
+            self.assertEqual(len(self.session.calls),before+1)
+            self.assertIsNone(self.tools.pending)
+
+    async def test_unrequested_and_expired_acks_do_nothing(self):
+        self.session.rows["switch.doorlamp"]={
+            "entity_id":"switch.doorlamp","state":"off",
+            "attributes":{"friendly_name":"Door Lamp"}
+        }
+        self.assertIsNone(await self.tools.handle(self.session,"ok"))
+        self.assertFalse(self.session.calls)
+        await self.tools.handle(self.session,"Hidupkan switch.doorlamp")
+        self.tools.pending["expires"]=0
+        response=await self.tools.handle(self.session,"yes")
+        self.assertIn("Permintaan dah tamat",response)
+        self.assertFalse(self.session.calls)
+        await self.tools.handle(self.session,"Hidupkan switch.doorlamp")
+        response=await self.tools.handle(self.session,"no")
+        self.assertIn("dibatalkan",response)
+        self.assertFalse(self.session.calls)
+
+    async def test_unrelated_question_cancels_stale_approval(self):
+        self.session.rows["switch.doorlamp"]={
+            "entity_id":"switch.doorlamp","state":"off",
+            "attributes":{"friendly_name":"Door Lamp"}
+        }
+        await self.tools.handle(self.session,"Hidupkan switch.doorlamp")
+        self.assertIsNotNone(self.tools.pending)
+        await self.tools.handle(self.session,"/ram")
+        self.assertIsNone(self.tools.pending)
+        self.assertIsNone(await self.tools.handle(self.session,"ok"))
         self.assertFalse(self.session.calls)
 
     async def test_proactive_requires_sustained_condition_and_caps(self):
