@@ -16,8 +16,8 @@ from collections import defaultdict
 
 API = "http://supervisor/core/api"
 HEADERS = {"Authorization": "Bearer " + os.environ.get("SUPERVISOR_TOKEN", "")}
-UNSAFE = re.compile(r"(gate|pagar|garage|garaj|autogate|door|pintu|lock|kunci|alarm|security|camera|cctv|nvr|restart|reboot|siren|pump|motor|power|server|wifi|network|router)", re.I)
-WRITE = re.compile(r"^(?:tolong\s+)?(hidupkan|nyalakan|pasang|on|turn on|matikan|padamkan|tutup|off|turn off|buka|open|close|unlock|lock)\s+(.+?)[.!]?$", re.I)
+UNSAFE = re.compile(r"(gate|pagar|garage|garaj|autogate|lock|kunci|alarm|security|camera|cctv|nvr|restart|reboot|siren|pump|motor|power|server|wifi|network|router|infrared|illuminator|cloud|motion|disarm|all_switch|essential_switch|day_switch)", re.I)
+WRITE = re.compile(r"^(?:(?:hai|hermes|tolong|boleh|please|cuba)\s+)*(hidupkan|nyalakan|pasang|on|turn on|light on|switch on|matikan|padamkan|tutup|off|turn off|light off|switch off|buka|bukakan|open|close|unlock|lock)\s+(.+?)[?.!]*$", re.I)
 READ = {
     "sensor.memory_use_percent": "RAM",
     "sensor.processor_use": "CPU",
@@ -127,33 +127,81 @@ class HomeTools:
         ) + "\nSemakan sahaja; tiada arahan buka/tutup dihantar."
 
     def light_summary(self, states):
-        lights=[(k,r) for k,r in states.items() if k.startswith(("light.","fan."))]
-        if not lights:
-            return "Tiada light/fan entity dalam HA untuk kawalan selamat."
+        # Real household lights are commonly switch.*, not light.*.
+        lights=[(eid,row) for eid,row in states.items()
+                if ((eid.startswith("light.") or
+                     (eid.startswith("switch.") and re.search(r"lamp\\d*$",eid,re.I)))
+                    and not UNSAFE.search(eid+" "+self.friendly(row)))]
         on=[self.friendly(row) for _,row in lights if self.state(row)=="on"]
-        return f"💡 Light/fan: {len(on)} ON daripada {len(lights)} entity.\n" + (
-            "Sedang ON: "+", ".join(on[:12]) if on else "Semua yang tersedia OFF."
-        )
+        unknown=[1 for _,row in lights if self.state(row) in ("unknown","unavailable")]
+        result=f"💡 Lampu rumah: {len(on)} ON daripada {len(lights)} entity lampu (switch + light)."
+        result+=("\\nSedang ON: "+", ".join(on[:15])) if on else "\\nTiada lampu rumah yang ditanda ON."
+        if unknown: result+=f"\\n{len(unknown)} lampu tak dapat dibaca."
+        return result+"\\nLampu infrared kamera tidak dikira lampu rumah."
 
     @staticmethod
-    def exact_safe_target(target, states):
-        target = re.sub(r"^(lampu|light|kipas|fan)\s+", "", target.strip(), flags=re.I).strip().lower()
-        if not target:
-            return None, "Sila sebut nama peranti."
+    def safe_actuator(entity_id,row):
+        domain=entity_id.split(".",1)[0]
+        if domain not in ("light","fan","switch"): return False
+        if UNSAFE.search(entity_id+" "+HomeTools.friendly(row)): return False
+        if domain=="switch" and not re.search(r"(lamp\\d*|fan\\d*|ac)$",entity_id,re.I): return False
+        return HomeTools.state(row) not in ("unknown","unavailable")
+
+    def full_inventory(self,states):
+        counts={}
+        for entity in states:
+            domain=entity.split(".",1)[0]
+            counts[domain]=counts.get(domain,0)+1
+        result=", ".join(f"{k}: {v}" for k,v in sorted(counts.items(),key=lambda x:(-x[1],x[0])))
+        return f"HA live: {len(states)} entity, {len(counts)} domain.\\n{result}\\n\\nGuna /entities switch, /entities sensor atau /entity switch.doorlamp untuk butiran."
+
+    def entity_list(self,states,query,page=1):
+        query=query.strip().lower()
+        domain_exact=any(k.startswith(query+".") for k in states)
+        filtered=[(k,r) for k,r in states.items() if
+                   (k.startswith(query+".") if domain_exact else
+                    query in (k+" "+self.friendly(r)).lower())]
+        if not filtered: return "Tiada entity sepadan. Cuba /entities."
+        page=max(1,min(int(page),max(1,(len(filtered)+14)//15)))
+        items=filtered[(page-1)*15:page*15]
+        return (f"🔎 {len(filtered)} entity untuk '{query}', page {page}.\\n"+
+                "\\n".join(f"• {self.friendly(r)}: {self.state(r)} ({k})" for k,r in items)[:3400])
+
+    def exact_entity(self,states,name):
+        target=re.sub(r"^(lampu|light|kipas|fan|aircond|ac|suis|switch)\\s+","",name.strip(),flags=re.I).lower().strip()
+        norm=lambda x:" ".join(re.sub(r"[^a-z0-9]+"," ",str(x).lower().replace("_"," ")).split())
+        aliases={"switch.doorlamp":{"door lamp","doorlamp","lampu pintu luar","pintu luar","lampu pintu","lampu depan"},
+                 "switch.carporchlamp":{"car porch lamp","lampu porch","lampu car porch","porch lamp","lampu parking"},
+                 "switch.drykitchenlamp":{"lampu dapur kering","dry kitchen lamp"},
+                 "switch.wetkitchenlamp":{"lampu dapur basah","wet kitchen lamp"}}
+        requested=norm(target)
         candidates=[]
-        for k,v in states.items():
-            if not k.startswith(("light.","fan.")):
-                continue
-            label=str((v.get("attributes") or {}).get("friendly_name") or "").lower().strip()
-            suffix=k.split(".",1)[1].replace("_"," ")
-            if UNSAFE.search(k+" "+label):
-                continue
-            if target in (k.lower(), label, suffix, "lampu "+label, "kipas "+label):
-                candidates.append((k,v))
-        if len(candidates)!=1:
-            return None, ("Nama peranti tak unik. Guna entity_id yang tepat." if candidates else
-                          "Aku tak jumpa light/fan dengan nama tepat itu. Semak /lampu.")
-        return candidates[0], None
+        for eid,row in states.items():
+            friendly=self.friendly(row)
+            keys={norm(eid),norm(eid.split(".",1)[-1]),norm(friendly)}
+            keys.update(norm(alias) for alias in aliases.get(eid,set()))
+            if requested in keys: candidates.append((eid,row))
+        return candidates
+
+    def entity_state(self,states,name):
+        matches=self.exact_entity(states,name)
+        if len(matches)==1:
+            eid,row=matches[0]
+            unit=(row.get("attributes") or {}).get("unit_of_measurement") or ""
+            return f"{self.friendly(row)}: {self.state(row)}{unit if len(str(unit))<15 else ''} ({eid})"
+        if len(matches)>1:
+            return "Ada beberapa entity nama serupa:\\n"+"\\n".join(f"• {self.friendly(r)} ({eid}): {self.state(r)}" for eid,r in matches[:12])
+        return self.entity_list(states,name)
+
+
+    def exact_safe_target(self,target,states):
+        matches=self.exact_entity(states,target)
+        safe=[(eid,row) for eid,row in matches if self.safe_actuator(eid,row)]
+        if len(safe)==1 and len(matches)==1:
+            return safe[0],None
+        if len(matches)>1:
+            return None,"Nama entity tak unik. Gunakan entity_id penuh; contoh switch.doorlamp."
+        return None,"Entity tak dijumpai atau kawalan disekat. Cuba /entities switch atau /entity switch.doorlamp."
 
     async def handle(self, session, prompt):
         text = str(prompt).strip()
@@ -166,11 +214,11 @@ class HomeTools:
             if not pending or time.monotonic()>pending["expires"] or code != pending["code"]:
                 return "Tiada arahan sah yang menunggu, kod salah atau sudah tamat (90 saat)."
             entity_id,domain,service=pending["entity"],pending["domain"],pending["service"]
-            if domain not in ("light","fan") or service not in ("turn_on","turn_off"):
+            if domain not in ("light","fan","switch") or service not in ("turn_on","turn_off"):
                 return "Arahan disekat oleh safety policy."
             try:
                 current=await self.entity(session, entity_id)
-                if UNSAFE.search(entity_id+" "+self.friendly(current)):
+                if not self.safe_actuator(entity_id,current):
                     return "Arahan disekat oleh safety policy."
                 async with session.post(API+"/services/"+domain+"/"+service,
                     headers=HEADERS, json={"entity_id":entity_id},timeout=20) as resp:
@@ -196,11 +244,12 @@ class HomeTools:
         m=WRITE.match(text)
         if m:
             verb,target=m.groups()
-            if any(term in (target+" "+verb).lower() for term in ("gate","autogate","garaj","garage","pagar","kunci","lock","pintu","alarm","cctv","camera","router","reboot")):
+            if any(term in (target+" "+verb).lower() for term in ("gate","autogate","garaj","garage","pagar","kunci","lock","alarm","cctv","camera","router","reboot")) or
+               ("pintu" in target.lower() and not any(x in target.lower() for x in ("lampu","lamp","light","pintu luar"))):
                 return ("Demi keselamatan, Hermes tak dibenarkan kawal gate, kunci, alarm "
                         "atau sistem kritikal. Boleh semak status melalui /gate.")
             verb=verb.lower()
-            if verb not in ("hidupkan","nyalakan","pasang","on","turn on","matikan","padamkan","tutup","off","turn off"):
+            if verb not in ("hidupkan","nyalakan","pasang","on","turn on","light on","switch on","matikan","padamkan","tutup","off","turn off","light off","switch off","buka","bukakan"):
                 return "Arahan kawalan ini belum dibenarkan. Hanya light/fan ON/OFF."
             try: states=await self.states(session)
             except Exception: return "Tak dapat akses status HA sekarang. Tiada arahan dihantar."
@@ -208,13 +257,44 @@ class HomeTools:
             if error: return error
             entity,row=item
             domain=entity.split(".",1)[0]
-            service="turn_off" if verb in ("matikan","padamkan","tutup","off","turn off") else "turn_on"
+            service="turn_off" if verb in ("matikan","padamkan","tutup","off","turn off","light off","switch off") else "turn_on"
             code=secrets.token_hex(3).upper()
             self.pending={"code":code,"entity":entity,"domain":domain,"service":service,"expires":time.monotonic()+90}
             label=self.friendly(row)
             action="MATIKAN" if service=="turn_off" else "HIDUPKAN"
             return (f"🔒 Sahkan: {action} {label} ({entity})?\n"
                     f"Balas /confirm {code} dalam 90 saat. /cancel untuk batal.")
+        # Dynamic catalogue; every HA domain is readable (not automatically controllable).
+        if lower in ("/entities","/devices","senarai entity","semua entity","list entities","tunjuk semua entity"):
+            try: return self.full_inventory(await self.states(session))
+            except Exception: return "Tak dapat ambil katalog HA live."
+        m=re.fullmatch(r"/(?:entities|devices)\\s+([a-z0-9_\\-. ]+)",lower)
+        if m:
+            tokens=m.group(1).rsplit(" ",1)
+            page=int(tokens[1]) if len(tokens)==2 and tokens[1].isdigit() else 1
+            query=tokens[0] if len(tokens)==2 and tokens[1].isdigit() else m.group(1)
+            try: return self.entity_list(await self.states(session),query,page)
+            except Exception: return "Tak dapat ambil senarai HA."
+        m=re.fullmatch(r"/(?:entity|entiti)\\s+([a-z_]+\\.[a-z0-9_]+)",lower)
+        if m:
+            try: return self.entity_state(await self.states(session),m.group(1))
+            except Exception: return "Tak dapat baca entity HA."
+        m=re.match(r"^(?:cari|search|senarai|list|tunjuk|show)\\s+([a-z][a-z0-9 _-]+)$",lower)
+        if m:
+            try: return self.entity_list(await self.states(session),m.group(1))
+            except Exception: return "Tak dapat cari entity HA."
+        entity_match=re.search(r"\\b[a-z_]+\\.[a-z0-9_]+\\b",lower)
+        if entity_match:
+            try: return self.entity_state(await self.states(session),entity_match.group(0))
+            except Exception: return "Tak dapat baca status entity HA."
+        if re.search(r"\\b(lampu|lights?|lamps?)\\b",lower) and
+           re.search(r"(mana|menyala|nyala|on|off|terbuka|hidup|padam|status|ada|berapa|senarai|suis|switch)",lower):
+            try: return self.light_summary(await self.states(session))
+            except Exception: return "Tak dapat baca lampu HA live."
+        m=re.match(r"^(?:(?:apa|bagaimana|boleh semak|tolong semak|check)\\s+)?(?:status|keadaan|bacaan|state|nilai)\\s+(.+?)\\s*[?.!]*$",lower)
+        if m:
+            try: return self.entity_state(await self.states(session),m.group(1))
+            except Exception: return "Tak dapat baca status HA."
         kind=None
         if lower in ("/rumah","/home","/statusrumah") or re.search(r"(status\s+rumah|ringkasan\s+rumah|siapa.*(?:rumah|home)|orang.*(?:rumah|home))",lower): kind="home"
         elif lower in ("/ram","/cpu","/prestasi") or re.search(r"\b(ram|cpu|memory|memori|disk|storage|storaj|suhu\s+(?:cpu|rpi|pi))\b",lower): kind="metrics"
