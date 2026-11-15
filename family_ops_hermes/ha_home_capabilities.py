@@ -167,41 +167,98 @@ class HomeTools:
         return (f"🔎 {len(filtered)} entity untuk '{query}', page {page}.\n"+
                 "\n".join(f"• {self.friendly(r)}: {self.state(r)} ({k})" for k,r in items)[:3400])
 
-    def exact_entity(self,states,name):
-        target=re.sub(r"^(lampu|light|kipas|fan|aircond|ac|suis|switch)\s+","",name.strip(),flags=re.I).lower().strip()
-        norm=lambda x:" ".join(re.sub(r"[^a-z0-9]+"," ",str(x).lower().replace("_"," ")).split())
-        aliases={"switch.doorlamp":{"door lamp","doorlamp","lampu pintu luar","lampu pintu","lampu depan"},
-                 "switch.carporchlamp":{"car porch lamp","lampu porch","lampu car porch","porch lamp","lampu parking"},
-                 "switch.drykitchenlamp":{"lampu dapur kering","dry kitchen lamp"},
-                 "switch.wetkitchenlamp":{"lampu dapur basah","wet kitchen lamp"}}
-        requested={norm(name.strip()),norm(target)}
-        candidates=[]
-        for eid,row in states.items():
-            friendly=self.friendly(row)
-            keys={norm(eid),norm(eid.split(".",1)[-1]),norm(friendly)}
-            keys.update(norm(alias) for alias in aliases.get(eid,set()))
-            if requested.intersection(keys): candidates.append((eid,row))
-        return candidates
+    @staticmethod
+    def normalize_name(raw):
+        """Normalize colloquial BM/English names for LOOKUP, not HA registry renames."""
+        text = str(raw).lower().strip()
+        if "." in text and re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", text):
+            text = text.split(".", 1)[1]
+        text = text.replace("_", " ")
+        # Preserve room index vs lamp index: livingroom2lamp != livingroomlamp2.
+        text = re.sub(r"\blivingroom(\d*)lamp(\d*)\b", r"living room \1 lamp \2", text)
+        text = re.sub(r"\blivingroom(\d*)fan(\d*)\b", r"living room \1 fan \2", text)
+        text = re.sub(r"\blivingroom(\d*)\b", r"living room \1", text)
+        text = re.sub(r"\bmasterbedroom\b|\bmasterbed\b", "master bedroom", text)
+        text = re.sub(r"\bdoorlamp\b", "door lamp", text)
+        text = re.sub(r"\bcarporchlamp\b", "car porch lamp", text)
+        text = re.sub(r"\b(ruang\s+tamu|ruang\s+depan)\b", "living room", text)
+        text = re.sub(r"\b(bilik\s+(?:tidur\s+)?utama|bilik\s+master)\b", "master bedroom", text)
+        text = re.sub(r"\bbilik\s+(?:tidur\s+)?([123])\b", r"bedroom \1", text)
+        text = re.sub(r"\bdapur\s+basah\b", "wet kitchen", text)
+        text = re.sub(r"\bdapur\s+kering\b", "dry kitchen", text)
+        text = re.sub(r"\b(pintu\s+luar)\b", "door", text)
+        text = re.sub(r"\b(lampu|lights?)\b", "lamp", text)
+        text = re.sub(r"\b(kipas)\b", "fan", text)
+        text = re.sub(r"\b(air\s*cond|aircond|penghawa\s+dingin)\b", "ac", text)
+        text = re.sub(r"\bliving\s+room\s+2\s+living\s+room\s+2\b", "living room 2", text)
+        return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
 
-    def entity_state(self,states,name):
-        matches=self.exact_entity(states,name)
-        if len(matches)==1:
-            eid,row=matches[0]
-            unit=(row.get("attributes") or {}).get("unit_of_measurement") or ""
-            return f"{self.friendly(row)}: {self.state(row)}{unit if len(str(unit))<15 else ''} ({eid})"
-        if len(matches)>1:
-            return "Ada beberapa entity nama serupa:\n"+"\n".join(f"• {self.friendly(r)} ({eid}): {self.state(r)}" for eid,r in matches[:12])
-        return self.entity_list(states,name)
+    def exact_entity(self, states, name):
+        text = str(name).lower().strip()
+        # A fully qualified entity ID always wins. This also prevents fuzzy
+        # lookups resolving an unsafe entity with a similar friendly name.
+        if text in states:
+            return [(text, states[text])]
+        domain_hint = None
+        m = re.match(r"^(switch|light|fan|climate)\s+(.+)$", text)
+        if m:
+            domain_hint, text = m.groups()
+        wanted = self.normalize_name(text)
+        if not wanted:
+            return []
+        aliases = {
+            "switch.doorlamp": {"door lamp", "lampu pintu luar", "lampu pintu", "lampu depan"},
+            "switch.carporchlamp": {"car porch lamp", "lampu porch", "lampu car porch", "lampu parking"},
+            "switch.drykitchenlamp": {"lampu dapur kering", "dry kitchen lamp"},
+            "switch.wetkitchenlamp": {"lampu dapur basah", "wet kitchen lamp"},
+        }
+        catalog = []
+        for entity_id, row in states.items():
+            if domain_hint and not entity_id.startswith(domain_hint + "."):
+                continue
+            names = {
+                self.normalize_name(entity_id),
+                self.normalize_name(self.friendly(row)),
+            }
+            names.update(self.normalize_name(alias) for alias in aliases.get(entity_id, set()))
+            catalog.append((entity_id, row, names))
+        exact = [(entity_id, row) for entity_id, row, names in catalog if wanted in names]
+        if exact:
+            return exact
+        # Partial matching is used ONLY to show a candidate selection when a
+        # room/fixture is underspecified. Never automatically execute a group.
+        tokens = set(wanted.split())
+        if len(tokens) < 2:
+            return []
+        return [(entity_id, row) for entity_id, row, names in catalog
+                if any(tokens.issubset(set(alias.split())) for alias in names)]
 
+    def entity_state(self, states, name):
+        matches = self.exact_entity(states, name)
+        if len(matches) == 1:
+            eid, row = matches[0]
+            unit = (row.get("attributes") or {}).get("unit_of_measurement") or ""
+            return f"{self.friendly(row)}: {self.state(row)}{unit if len(str(unit)) < 15 else ''} ({eid})"
+        if len(matches) > 1:
+            return ("Ada beberapa entity yang sepadan:\n"
+                    + "\n".join(f"• {self.friendly(r)} ({eid}): {self.state(r)}" for eid, r in matches[:12]))
+        return self.entity_list(states, name)
 
-    def exact_safe_target(self,target,states):
-        matches=self.exact_entity(states,target)
-        safe=[(eid,row) for eid,row in matches if self.safe_actuator(eid,row)]
-        if len(safe)==1 and len(matches)==1:
-            return safe[0],None
-        if len(matches)>1:
-            return None,"Nama entity tak unik. Gunakan entity_id penuh; contoh switch.doorlamp."
-        return None,"Entity tak dijumpai atau kawalan disekat. Cuba /entities switch atau /entity switch.doorlamp."
+    def exact_safe_target(self, target, states):
+        matches = self.exact_entity(states, target)
+        safe = [(eid, row) for eid, row in matches if self.safe_actuator(eid, row)]
+        if len(safe) == 1 and len(matches) == 1:
+            return safe[0], None
+        if len(safe) > 1:
+            options = "\n".join(
+                f"• {self.friendly(row)} — {entity_id}"
+                for entity_id, row in safe[:10]
+            )
+            return None, ("Ada beberapa peranti sepadan. Pilih satu yang tepat:\n"
+                          + options + "\nContoh: Hidupkan switch.livingroomlamp2")
+        if matches:
+            return None, "Peranti ini boleh dibaca, tetapi kawalannya disekat atas faktor keselamatan."
+        return None, "Entity tak dijumpai. Cuba /entities switch atau sebut nama penuh peranti."
 
     async def handle(self, session, prompt):
         text = str(prompt).strip()
