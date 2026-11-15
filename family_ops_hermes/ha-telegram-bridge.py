@@ -159,6 +159,7 @@ async def worker(session, home_tools):
         prompt = await QUEUE.get()
         try:
             answer = await home_tools.handle(session, prompt)
+            local_ha_response = answer is not None
             if answer is None:
                 answer = await asyncio.wait_for(asyncio.to_thread(infer, prompt), timeout=125)
                 HISTORY.append(("user", prompt))
@@ -167,6 +168,8 @@ async def worker(session, home_tools):
             COUNTS["replied"] += 1
             status("connected")
             print("HERMES_HA_TG_BRIDGE: model_reply_sent=true", flush=True)
+            if local_ha_response:
+                print("HERMES_HA_TG_BRIDGE: ha_tools_reply_sent=true", flush=True)
         except Exception:
             COUNTS["errors"] += 1
             status("connected", "request_failed")
