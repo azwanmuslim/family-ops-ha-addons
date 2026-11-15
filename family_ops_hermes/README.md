@@ -6,8 +6,8 @@ Custom Home Assistant OS app, adapted from [diegaccio/ha-hermes-addon](https://g
 
 - Keep `model.provider: openai-codex` and `model.default: gpt-6.1-sol` across app restarts. No OpenAI API key required.
 - Store OAuth under this app's isolated persistent `/data`, not the existing GitHub runner.
-- Never configure Hermes' Telegram gateway against the Home Assistant bot token: HA owns incoming updates. v30 provides an opt-in owner-only event bridge instead.
-- The v30 app requests Home Assistant Core API access for its opt-in owner-only bridge; host-network access remains disabled. Treat the injected Supervisor token as an administrator credential.
+- Never configure Hermes' Telegram gateway against the Home Assistant bot token: HA owns incoming updates. v31 provides an opt-in owner-only event bridge instead.
+- The v31 app requests Home Assistant Core API access for its opt-in owner-only bridge; host-network access remains disabled. Treat the injected Supervisor token as an administrator credential.
 - Home Assistant ingress protects the browser terminal; enable it only for device-code login and disable afterward.
 - This is a personal fork; rebase/re-audit before any upstream upgrade.
 
@@ -21,7 +21,7 @@ Custom Home Assistant OS app, adapted from [diegaccio/ha-hermes-addon](https://g
 
 For source notes see official [Hermes providers documentation](https://hermes-agent.nousresearch.com/docs/integrations/providers).
 
-## Telegram bridge (v30)
+## Telegram bridge (v31)
 
 - Leave `ha_telegram_bridge: false` until HA Telegram routing is verified. The bridge uses HA WebSocket `telegram_command`/`telegram_text` events (and the event entity when available) and `telegram_bot.send_message`; it does not run a second Telegram poller.
 - Restrict `ha_telegram_chat_id` and `ha_telegram_user_id` to your owner's private DM. Both must match; never use `ha_telegram_plain_text` until `/ai` is verified.
