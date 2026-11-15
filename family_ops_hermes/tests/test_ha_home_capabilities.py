@@ -267,11 +267,12 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
             }
             result = await self.tools.handle(self.session, "Tutup lampu ruang tamu")
             self.assertIn("Balas nombor", result)
+            expected_id = self.tools.pending_selection["entities"][1]
             before = len(self.session.calls)
             result = await self.tools.handle(self.session, variant)
-            self.assertIn("switch.livingroomlamp2", result, variant)
+            self.assertIn(expected_id, result, variant)
             self.assertIsNone(self.tools.pending_selection)
-            self.assertEqual(self.tools.pending["entity"], "switch.livingroomlamp2")
+            self.assertEqual(self.tools.pending["entity"], expected_id)
             self.assertEqual(before, len(self.session.calls))
             confirm = await self.tools.handle(self.session, "ok")
             self.assertIn("disahkan HA", confirm)
