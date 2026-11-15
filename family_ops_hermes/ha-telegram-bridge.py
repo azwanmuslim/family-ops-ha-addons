@@ -61,7 +61,8 @@ def eligible(event_name, data):
             "/ai", "/hermes", "/rumah", "/home", "/statusrumah",
             "/ram", "/cpu", "/prestasi", "/cctv", "/camera", "/gate", "/pagar",
             "/lampu", "/lights", "/peranti", "/hahelp", "/homehelp", "/rumahhelp",
-            "/confirm", "/sahkan", "/cancel", "/batal"
+            "/confirm", "/sahkan", "/cancel", "/batal",
+            "/entities", "/devices", "/entity", "/entiti"
         }
         if command not in allowed:
             return None
