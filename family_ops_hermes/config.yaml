@@ -17,7 +17,7 @@ panel_icon: mdi:robot-outline
 hassio_api: false
 homeassistant_api: false
 options:
-  timezone: UTC
+  timezone: Asia/Kuala_Lumpur
   model_provider: openai-codex
   model_name: gpt-5.3-codex
   model_base_url: ""
