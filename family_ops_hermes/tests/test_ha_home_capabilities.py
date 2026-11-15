@@ -210,6 +210,49 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.tools.handle(self.session,"ok"))
         self.assertFalse(self.session.calls)
 
+    async def test_numeric_selection_then_ok_needs_two_steps(self):
+        for eid, name in [
+            ("switch.livingroomlamp1", "Living Room Lamp 1"),
+            ("switch.livingroomlamp2", "Living Room Lamp 2"),
+            ("switch.livingroom2lamp", "Living Room 2 Living Room 2 Lamp"),
+        ]:
+            self.session.rows[eid]={"entity_id":eid,"state":"off",
+                                    "attributes":{"friendly_name":name}}
+        listing=await self.tools.handle(self.session,"Hidupkan lampu ruang tamu")
+        self.assertIn("1.",listing)
+        self.assertIn("2.",listing)
+        self.assertIsNone(self.tools.pending)
+        self.assertIsNotNone(self.tools.pending_selection)
+        self.assertFalse(self.session.calls)
+        choices=self.tools.pending_selection["entities"]
+        selected=choices[1]
+        requested=await self.tools.handle(self.session,"2")
+        self.assertIn("🔒 Sahkan:",requested)
+        self.assertIn(selected,requested)
+        self.assertFalse(self.session.calls)
+        result=await self.tools.handle(self.session,"ok")
+        self.assertIn("disahkan HA",result)
+        self.assertEqual(self.session.rows[selected]["state"],"on")
+        self.assertEqual(len(self.session.calls),1)
+
+    async def test_numeric_selection_expires_and_cancel_works(self):
+        for eid, name in [
+            ("switch.livingroomlamp1", "Living Room Lamp 1"),
+            ("switch.livingroomlamp2", "Living Room Lamp 2"),
+        ]:
+            self.session.rows[eid]={"entity_id":eid,"state":"off",
+                                    "attributes":{"friendly_name":name}}
+        await self.tools.handle(self.session,"Hidupkan lampu ruang tamu")
+        self.tools.pending_selection["expires"]=0
+        expired=await self.tools.handle(self.session,"1")
+        self.assertIn("tamat",expired)
+        self.assertFalse(self.session.calls)
+        await self.tools.handle(self.session,"Hidupkan lampu ruang tamu")
+        response=await self.tools.handle(self.session,"batal")
+        self.assertIn("dibatalkan",response)
+        self.assertIsNone(self.tools.pending_selection)
+        self.assertFalse(self.session.calls)
+
     async def test_proactive_requires_sustained_condition_and_caps(self):
         self.session.rows["camera.depan"]["state"]="unavailable"
         await self.tools.proactive_once(self.session)
