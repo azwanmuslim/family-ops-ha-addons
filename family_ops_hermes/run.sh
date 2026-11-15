@@ -46,7 +46,7 @@ if config_path.exists():
 
 timezone = str(options.get('timezone') or 'UTC').strip() or 'UTC'
 model_provider = str(options.get('model_provider') or 'openai-codex').strip() or 'openai-codex'
-model_name = str(options.get('model_name') or 'gpt-5.4').strip() or 'gpt-5.4'
+model_name = str(options.get('model_name') or 'gpt-5.6-terra').strip() or 'gpt-5.6-terra'
 model_base_url = str(options.get('model_base_url') or '').strip()
 gateway_timeout_raw = options.get('gateway_timeout')
 gateway_timeout = 1800 if gateway_timeout_raw in (None, '') else int(gateway_timeout_raw)
