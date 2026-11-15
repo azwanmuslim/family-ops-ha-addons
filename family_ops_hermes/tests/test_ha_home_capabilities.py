@@ -253,6 +253,66 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.tools.pending_selection)
         self.assertFalse(self.session.calls)
 
+    async def test_natural_number_choices_are_safe_and_confirmed(self):
+        for variant in ("No 2", "no. 2", "nombor 2", "pilihan 2", "#2", "2.", "2"):
+            self.tools.pending = None
+            self.tools.pending_selection = None
+            self.session.rows["switch.livingroomlamp1"] = {
+                "entity_id": "switch.livingroomlamp1", "state": "off",
+                "attributes": {"friendly_name": "Living Room Lamp 1"}
+            }
+            self.session.rows["switch.livingroomlamp2"] = {
+                "entity_id": "switch.livingroomlamp2", "state": "off",
+                "attributes": {"friendly_name": "Living Room Lamp 2"}
+            }
+            result = await self.tools.handle(self.session, "Tutup lampu ruang tamu")
+            self.assertIn("Balas nombor", result)
+            before = len(self.session.calls)
+            result = await self.tools.handle(self.session, variant)
+            self.assertIn("switch.livingroomlamp2", result, variant)
+            self.assertIsNone(self.tools.pending_selection)
+            self.assertEqual(self.tools.pending["entity"], "switch.livingroomlamp2")
+            self.assertEqual(before, len(self.session.calls))
+            confirm = await self.tools.handle(self.session, "ok")
+            self.assertIn("disahkan HA", confirm)
+            self.assertEqual(len(self.session.calls), before + 1)
+
+    async def test_ambiguous_combined_numbers_do_not_consume_selection(self):
+        for eid, name in [
+            ("switch.livingroomlamp1", "Living Room Lamp 1"),
+            ("switch.livingroomlamp2", "Living Room Lamp 2"),
+        ]:
+            self.session.rows[eid] = {"entity_id": eid, "state": "off",
+                                      "attributes": {"friendly_name": name}}
+        await self.tools.handle(self.session, "Tutup lampu ruang tamu")
+        pending_selection = self.tools.pending_selection
+        result = await self.tools.handle(self.session, "No 2\n\n3")
+        self.assertIn("SATU nombor", result)
+        self.assertIsNotNone(self.tools.pending_selection)
+        self.assertIsNone(self.tools.pending)
+        self.assertEqual(self.tools.pending_selection, pending_selection)
+        self.assertFalse(self.session.calls)
+        result = await self.tools.handle(self.session, "No 2")
+        self.assertIn("Sahkan", result)
+        self.assertFalse(self.session.calls)
+        result = await self.tools.handle(self.session, "3")
+        self.assertIn("balas 'ok'", result)
+        self.assertIsNotNone(self.tools.pending)
+        self.assertFalse(self.session.calls)
+
+    async def test_out_of_range_selection_preserves_choices(self):
+        for eid, name in [
+            ("switch.livingroomlamp1", "Living Room Lamp 1"),
+            ("switch.livingroomlamp2", "Living Room Lamp 2"),
+        ]:
+            self.session.rows[eid] = {"entity_id": eid, "state": "off",
+                                      "attributes": {"friendly_name": name}}
+        await self.tools.handle(self.session, "Tutup lampu ruang tamu")
+        response = await self.tools.handle(self.session, "no 9")
+        self.assertIn("Pilihan nombor", response)
+        self.assertIsNotNone(self.tools.pending_selection)
+        self.assertFalse(self.session.calls)
+
     async def test_proactive_requires_sustained_condition_and_caps(self):
         self.session.rows["camera.depan"]["state"]="unavailable"
         await self.tools.proactive_once(self.session)
