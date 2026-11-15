@@ -79,7 +79,7 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.session.calls),1)
 
     async def test_lock_gate_and_scripts_never_executed(self):
-        for message in ["Buka gate","tutup pintu depan","unlock kunci utama","open garage"]:
+        for message in ["Buka gate","tutup pintu depan","Buka pintu luar","unlock kunci utama","open garage"]:
             result=await self.tools.handle(self.session,message)
             self.assertIn("keselamatan",result)
         self.assertFalse(self.session.calls)
