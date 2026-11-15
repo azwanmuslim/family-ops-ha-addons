@@ -46,7 +46,7 @@ if config_path.exists():
 
 timezone = str(options.get('timezone') or 'UTC').strip() or 'UTC'
 model_provider = str(options.get('model_provider') or 'openai-codex').strip() or 'openai-codex'
-model_name = str(options.get('model_name') or 'gpt-5.3-codex').strip() or 'gpt-5.3-codex'
+model_name = str(options.get('model_name') or 'gpt-5.4').strip() or 'gpt-5.4'
 model_base_url = str(options.get('model_base_url') or '').strip()
 gateway_timeout_raw = options.get('gateway_timeout')
 gateway_timeout = 1800 if gateway_timeout_raw in (None, '') else int(gateway_timeout_raw)
@@ -148,5 +148,14 @@ if [ "${ENABLE_DASHBOARD_TUI}" = "true" ]; then
 fi
 
 export ENABLE_TERMINAL
+
+CODEX_SMOKE_ONCE="$("$HERMES_PYTHON" - <<'PY'
+from pathlib import Path
+import json
+options = json.loads(Path('/data/options.json').read_text(encoding='utf-8'))
+print('true' if options.get('codex_smoke_once') else 'false')
+PY
+)"
+export CODEX_SMOKE_ONCE
 
 exec /opt/hermes/docker/entrypoint.sh /addon-run.sh
