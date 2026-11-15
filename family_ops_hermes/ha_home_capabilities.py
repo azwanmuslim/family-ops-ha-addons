@@ -170,17 +170,17 @@ class HomeTools:
     def exact_entity(self,states,name):
         target=re.sub(r"^(lampu|light|kipas|fan|aircond|ac|suis|switch)\s+","",name.strip(),flags=re.I).lower().strip()
         norm=lambda x:" ".join(re.sub(r"[^a-z0-9]+"," ",str(x).lower().replace("_"," ")).split())
-        aliases={"switch.doorlamp":{"door lamp","doorlamp","lampu pintu luar","pintu luar","lampu pintu","lampu depan"},
+        aliases={"switch.doorlamp":{"door lamp","doorlamp","lampu pintu luar","lampu pintu","lampu depan"},
                  "switch.carporchlamp":{"car porch lamp","lampu porch","lampu car porch","porch lamp","lampu parking"},
                  "switch.drykitchenlamp":{"lampu dapur kering","dry kitchen lamp"},
                  "switch.wetkitchenlamp":{"lampu dapur basah","wet kitchen lamp"}}
-        requested=norm(target)
+        requested={norm(name.strip()),norm(target)}
         candidates=[]
         for eid,row in states.items():
             friendly=self.friendly(row)
             keys={norm(eid),norm(eid.split(".",1)[-1]),norm(friendly)}
             keys.update(norm(alias) for alias in aliases.get(eid,set()))
-            if requested in keys: candidates.append((eid,row))
+            if requested.intersection(keys): candidates.append((eid,row))
         return candidates
 
     def entity_state(self,states,name):
@@ -245,7 +245,7 @@ class HomeTools:
         if m:
             verb,target=m.groups()
             if (any(term in (target+" "+verb).lower() for term in ("gate","autogate","garaj","garage","pagar","kunci","lock","alarm","cctv","camera","router","reboot")) or
-                ("pintu" in target.lower() and not any(x in target.lower() for x in ("lampu","lamp","light","pintu luar")))):
+                ("pintu" in target.lower() and not any(x in target.lower() for x in ("lampu","lamp","light")))):
                 return ("Demi keselamatan, Hermes tak dibenarkan kawal gate, kunci, alarm "
                         "atau sistem kritikal. Boleh semak status melalui /gate.")
             verb=verb.lower()
