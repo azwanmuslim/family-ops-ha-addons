@@ -15,6 +15,7 @@ from collections import deque
 from pathlib import Path
 
 import aiohttp
+from ha_home_capabilities import HomeTools
 
 OWNER_CHAT = os.environ.get("HA_TELEGRAM_CHAT_ID", "").strip()
 OWNER_USER = os.environ.get("HA_TELEGRAM_USER_ID", "").strip()
@@ -56,11 +57,20 @@ def eligible(event_name, data):
         return None
     if event_name == "telegram_command":
         command = str(data.get("command") or "").split("@", 1)[0].lower()
-        if command not in ("/ai", "/hermes"):
+        allowed = {
+            "/ai", "/hermes", "/rumah", "/home", "/statusrumah",
+            "/ram", "/cpu", "/prestasi", "/cctv", "/camera", "/gate", "/pagar",
+            "/lampu", "/lights", "/peranti", "/hahelp", "/homehelp", "/rumahhelp",
+            "/confirm", "/sahkan", "/cancel", "/batal"
+        }
+        if command not in allowed:
             return None
         args = data.get("args") or ""
         text = " ".join(str(v) for v in args) if isinstance(args, list) else str(args)
-        return text.strip()[:1200] or "/help"
+        text = text.strip()[:1200]
+        if command in ("/ai", "/hermes"):
+            return text or "/hahelp"
+        return command + (" " + text if text else "")
     if event_name == "telegram_text" and ALLOW_PLAIN:
         text = str(data.get("text") or "").strip()
         if text.startswith("/") or not text:
@@ -121,8 +131,10 @@ def infer(prompt):
             "You are Hermes, a friendly personal assistant replying through an existing "
             "Home Assistant Telegram bot. Reply naturally in the user's language, "
             "usually casual Malay. Keep messages short, clear and useful. "
-            "You have no Home Assistant device-control tools in this bridge; never "
-            "claim you controlled devices or inspected live house data. "
+            "Live Home Assistant queries and confirmation-gated light/fan controls are "
+            "performed by an independent local tool router BEFORE this model call. "
+            "You have NO permission to call Home Assistant actions directly. Never "
+            "invent live device statuses, actions, or claim a device was controlled. "
             "Do not reveal secrets or credentials.\n"
             + ("Previous conversation:\n" + context + "\n" if context else "")
             + "User: " + prompt + "\nAssistant:"
@@ -142,13 +154,12 @@ async def send(session, msg):
         await resp.read()
 
 
-async def worker(session):
+async def worker(session, home_tools):
     while True:
         prompt = await QUEUE.get()
         try:
-            if prompt == "/help":
-                answer = "Hermes ready. Taip /ai <soalan>, atau mesej biasa jika mode chat diaktifkan."
-            else:
+            answer = await home_tools.handle(session, prompt)
+            if answer is None:
                 answer = await asyncio.wait_for(asyncio.to_thread(infer, prompt), timeout=125)
                 HISTORY.append(("user", prompt))
                 HISTORY.append(("assistant", answer[:2500]))
@@ -223,7 +234,9 @@ async def main():
     status("starting")
     timeout = aiohttp.ClientTimeout(total=130)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        await asyncio.gather(worker(session), listen(session))
+        home_tools = HomeTools(send)
+        await asyncio.gather(worker(session, home_tools), listen(session),
+                             home_tools.proactive_loop(session))
 
 
 if __name__ == "__main__":
