@@ -12,11 +12,18 @@
   const NativeWebSocket = window.WebSocket;
   if (typeof NativeWebSocket !== "function") return;
 
+  // Browser pathname is authoritative in Home Assistant ingress.
+  // Do not trust the backend's X-Forwarded-Prefix value for embedded UI
+  // routing: upstream may reject a long HA token prefix or receive a
+  // shortened/incomplete proxy header.
+  const pathMatch = window.location.pathname.match(/^(.*\/dashboard)(?:\/|$)/);
+  const browserBase = pathMatch ? pathMatch[1] : "";
+  if (browserBase) window.__HERMES_BASE_PATH__ = browserBase;
+
   class HermesIngressWebSocket extends NativeWebSocket {
     constructor(url, protocols) {
       const value = new URL(String(url), window.location.href);
-      const baseFromUrl = window.location.pathname.match(/^(.*\/dashboard)(?:\/|$)/);
-      const base = String(window.__HERMES_BASE_PATH__ || (baseFromUrl && baseFromUrl[1]) || "").replace(/\/+$/, "");
+      const base = String(browserBase || window.__HERMES_BASE_PATH__ || "").replace(/\/+$/, "");
       const rootChatPath = value.pathname === "/api/pty" || value.pathname === "/api/events";
       const sameHost = value.host === window.location.host;
 
