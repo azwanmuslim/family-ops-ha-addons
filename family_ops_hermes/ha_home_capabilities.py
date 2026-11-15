@@ -71,7 +71,8 @@ class HomeTools:
                 continue
             label = (entity_id + " " + HomeTools.friendly(row)).lower()
             attr = row.get("attributes") or {}
-            if any(word in label for word in ("gate", "autogate", "garage", "garaj", "pagar")) or (
+            words = re.sub(r"[^a-z0-9]+", " ", label)
+            if re.search(r"\b(?:gate|autogate|garage|garaj|pagar)\b", words) or (
                 domain == "binary_sensor" and attr.get("device_class") == "garage_door"
             ):
                 results.append((entity_id, row))
