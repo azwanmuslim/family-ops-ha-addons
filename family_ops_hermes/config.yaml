@@ -26,7 +26,7 @@ options:
   anthropic_api_key: ""
   openai_api_key: ""
   enable_dashboard_tui: false
-  enable_terminal: true
+  enable_terminal: false
   codex_smoke_once: false
   gateway_timeout: 1800
 schema:
