@@ -16,15 +16,14 @@ from pathlib import Path
 
 import aiohttp
 
-OPTIONS = json.loads(Path("/data/options.json").read_text(encoding="utf-8"))
-OWNER_CHAT = str(OPTIONS.get("ha_telegram_chat_id") or "").strip()
-OWNER_USER = str(OPTIONS.get("ha_telegram_user_id") or OWNER_CHAT).strip()
-ALLOW_PLAIN = bool(OPTIONS.get("ha_telegram_plain_text", False))
-MODEL = str(OPTIONS.get("model_name") or "gpt-6.1-sol").strip()
+OWNER_CHAT = os.environ.get("HA_TELEGRAM_CHAT_ID", "").strip()
+OWNER_USER = os.environ.get("HA_TELEGRAM_USER_ID", "").strip()
+ALLOW_PLAIN = os.environ.get("HA_TELEGRAM_PLAIN_TEXT", "false").lower() == "true"
+MODEL = os.environ.get("HA_TELEGRAM_MODEL", "gpt-6.1-sol").strip()
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 WS_URL = "ws://supervisor/core/websocket"
 SEND_URL = "http://supervisor/core/api/services/telegram_bot/send_message"
-STATE_PATH = Path("/data/.ha_telegram_bridge_status.json")
+STATE_PATH = Path("/tmp/ha_telegram_bridge_status.json")
 HTTP_HEADERS = {"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"}
 HISTORY = deque(maxlen=8)
 SEEN = {}
