@@ -30,6 +30,7 @@ COPY codex-direct-check.py /codex-direct-check.py
 COPY codex-provider-probe-v4.py /codex-provider-probe-v4.py
 COPY codex-model-discovery-v5.py /codex-model-discovery-v5.py
 COPY ha-telegram-bridge.py /ha-telegram-bridge.py
+COPY ha_home_capabilities.py /ha_home_capabilities.py
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh /addon-run.sh
 
