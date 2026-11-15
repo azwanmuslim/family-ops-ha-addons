@@ -264,38 +264,68 @@ class HomeTools:
         text = str(prompt).strip()
         lower=text.lower()
         if not text: return "/ai <soalan> untuk bersembang dengan Hermes."
-        if lower.startswith(("/confirm","confirm ","sahkan ","/sahkan")):
-            code=text.split(maxsplit=1)[-1].strip().upper() if " " in text else ""
-            pending=self.pending
-            self.pending=None  # one attempt, then invalidate even if wrong
-            if not pending or time.monotonic()>pending["expires"] or code != pending["code"]:
-                return "Tiada arahan sah yang menunggu, kod salah atau sudah tamat (90 saat)."
-            entity_id,domain,service=pending["entity"],pending["domain"],pending["service"]
-            if domain not in ("light","fan","switch") or service not in ("turn_on","turn_off"):
+        # A reply to a specific outstanding owner request can be a simple "ok".
+        # No other text can approve an action, and no device is changed by a
+        # model response. /confirm without a code MUST NOT consume the request.
+        ack = re.sub(r"[.?!]+$", "", lower).strip()
+        yes = {
+            "/confirm", "confirm", "/sahkan", "sahkan",
+            "ok", "okay", "ok boleh", "okay boleh", "baik", "baiklah",
+            "yes", "yes boleh", "ya", "y", "yup", "yep", "iya",
+            "boleh", "setuju", "betul", "teruskan", "proceed",
+        }
+        m_code = re.fullmatch(r"/?(?:confirm|sahkan)\s+(\S+)", ack)
+        is_confirmation = ack in yes or bool(m_code)
+        if is_confirmation:
+            pending = self.pending
+            if pending is None:
+                return ("Tiada arahan kawalan menunggu. Nyatakan peranti dahulu."
+                        if ack.startswith(("/confirm", "/sahkan", "confirm ", "sahkan "))
+                        else None)
+            if time.monotonic() >= pending["expires"]:
+                self.pending = None
+                return "Permintaan dah tamat. Sila hantar arahan sekali lagi."
+            if m_code and m_code.group(1).upper() != pending["code"]:
+                # Wrong code must NOT cancel the request.
+                return "Kod tak sepadan. Cukup balas 'ok' atau '/confirm' sebelum tamat."
+            # Consume exactly once BEFORE any network request to avoid retries
+            # accidentally toggling an actuator twice.
+            self.pending = None
+            entity_id, domain, service = pending["entity"], pending["domain"], pending["service"]
+            if domain not in ("light", "fan", "switch") or service not in ("turn_on", "turn_off"):
                 return "Arahan disekat oleh safety policy."
             try:
-                current=await self.entity(session, entity_id)
-                if not self.safe_actuator(entity_id,current):
+                current = await self.entity(session, entity_id)
+                if not self.safe_actuator(entity_id, current):
                     return "Arahan disekat oleh safety policy."
-                async with session.post(API+"/services/"+domain+"/"+service,
-                    headers=HEADERS, json={"entity_id":entity_id},timeout=20) as resp:
-                    if resp.status != 200: return "HA menolak arahan. Tiada pengesahan tindakan."
+                async with session.post(API + "/services/" + domain + "/" + service,
+                    headers=HEADERS, json={"entity_id": entity_id}, timeout=20) as resp:
+                    if resp.status != 200:
+                        return "HA menolak arahan. Tiada pengesahan tindakan."
                     await resp.read()
                 await asyncio.sleep(1)
-                newer=await self.entity(session,entity_id)
-                expected="on" if service=="turn_on" else "off"
-                actual=self.state(newer)
-                return (f"✅ {self.friendly(newer)}: {actual.upper()} (disahkan HA)." if actual==expected
-                        else f"HA terima arahan, tapi status sekarang {actual}. Sila semak peranti.")
+                newer = await self.entity(session, entity_id)
+                expected = "on" if service == "turn_on" else "off"
+                actual = self.state(newer)
+                return (f"✅ {self.friendly(newer)}: {actual.upper()} (disahkan HA)."
+                        if actual == expected else
+                        f"HA terima arahan, tetapi status sekarang {actual}. Sila semak peranti.")
             except Exception:
                 return "HA tidak dapat mengesahkan tindakan. Sila semak aplikasi HA."
+        if self.pending and ack in ("no", "nope", "tidak", "tak", "tak jadi", "jangan", "tak payah"):
+            self.pending = None
+            return "Ok, arahan dibatalkan. Tiada peranti diubah."
+        # Any different question cancels the previous pending permission,
+        # so an unrelated future "ok" cannot approve an old action.
+        if self.pending and ack not in ("/cancel", "cancel", "batal", "/batal"):
+            self.pending = None
         if lower in ("/cancel","cancel","batal","/batal"):
             self.pending=None
             return "Arahan kawalan dibatalkan."
         if lower in ("/hahelp","/homehelp","/rumahhelp"):
             return ("Hermes rumah:\n/rumah — ringkasan\n/ram — prestasi RPi4\n/cctv — status entity kamera\n"
                     "/gate — sensor pagar\n/lampu — light/fan\n"
-                    "Hidupkan lampu <nama tepat> → minta /confirm KOD.\n"
+                    "Hidupkan lampu ruang tamu → pilih lampu tepat → balas ok/yes/confirm.\n"
                     "Gate/kunci/alarm tidak dikawal melalui AI.")
         # Prevent a model from construing unsafe device-control language as authorization.
         m=WRITE.match(text)
@@ -316,11 +346,11 @@ class HomeTools:
             domain=entity.split(".",1)[0]
             service="turn_off" if verb in ("matikan","padamkan","tutup","off","turn off","light off","switch off") else "turn_on"
             code=secrets.token_hex(3).upper()
-            self.pending={"code":code,"entity":entity,"domain":domain,"service":service,"expires":time.monotonic()+90}
+            self.pending={"code":code,"entity":entity,"domain":domain,"service":service,"expires":time.monotonic()+180}
             label=self.friendly(row)
             action="MATIKAN" if service=="turn_off" else "HIDUPKAN"
             return (f"🔒 Sahkan: {action} {label} ({entity})?\n"
-                    f"Balas /confirm {code} dalam 90 saat. /cancel untuk batal.")
+                    f"Balas ok / yes / confirm / /confirm dalam 3 minit. Balas batal untuk batalkan.")
         # Dynamic catalogue; every HA domain is readable (not automatically controllable).
         if lower in ("/entities","/devices","senarai entity","semua entity","list entities","tunjuk semua entity"):
             try: return self.full_inventory(await self.states(session))
