@@ -48,6 +48,23 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1/1",result)
         self.assertFalse(self.session.calls)
 
+    async def test_frigate_sensor_not_mistaken_for_gate(self):
+        self.session.rows["sensor.disk_use_percent_media_frigate"]={
+            "entity_id":"sensor.disk_use_percent_media_frigate",
+            "state":"31.6","attributes":{"friendly_name":"Disk Usage (HDD)"}
+        }
+        gates=self.tools.gate_items(self.session.rows)
+        self.assertEqual([k for k,_ in gates],["cover.gate"])
+
+    async def test_nvr_illuminator_excluded_from_control(self):
+        self.session.rows["light.nvr_car_porch_cam_illuminator"]={
+            "entity_id":"light.nvr_car_porch_cam_illuminator",
+            "state":"off","attributes":{"friendly_name":"Car Porch Cam Illuminator"}
+        }
+        answer=await self.tools.handle(self.session,"on light.nvr_car_porch_cam_illuminator")
+        self.assertIn("tak jumpa",answer)
+        self.assertFalse(self.session.calls)
+
     async def test_control_needs_confirmation_and_no_early_write(self):
         result=await self.tools.handle(self.session,"Hidupkan lampu ruang tamu")
         self.assertIn("/confirm",result)
