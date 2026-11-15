@@ -1,0 +1,3 @@
+# Direct Codex v3 verification
+
+One-time startup test (opt-in via the existing `codex_smoke_once` flag) introduced in addon v2026.5.7-26. Does **not** depend on dashboard ingress or WebSocket. Only logs safe structured status values: OAuth login present, provider resolved, model output present/matched, and enum diagnostic. Never posts token, labels, user questions, auth files or model output. One-time marker `/data/.codex_direct_v3_done` prevents repeats. A single prompt instructs no tools. The runner queries only the prefixed sanitized log line. RPi4/HA Core must remain healthy. If inference fails, do not connect Telegram until fixed.
