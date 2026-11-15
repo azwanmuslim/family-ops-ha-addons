@@ -19,7 +19,7 @@ homeassistant_api: false
 options:
   timezone: Asia/Kuala_Lumpur
   model_provider: openai-codex
-  model_name: gpt-5.4
+  model_name: gpt-5.6-terra
   model_base_url: ""
   openrouter_api_key: ""
   google_api_key: ""
