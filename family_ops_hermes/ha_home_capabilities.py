@@ -30,6 +30,7 @@ class HomeTools:
     def __init__(self, owner_send):
         self.owner_send = owner_send
         self.pending = None
+        self.pending_selection = None
         self.active_conditions = {}
         self.alerted_conditions = set()
         self.alert_day = None
@@ -262,10 +263,43 @@ class HomeTools:
             return None, "Peranti ini boleh dibaca, tetapi kawalannya disekat atas faktor keselamatan."
         return None, "Entity tak dijumpai. Cuba /entities switch atau sebut nama penuh peranti."
 
+    def propose_control(self, entity_id, row, service):
+        if not self.safe_actuator(entity_id, row):
+            return "Kawalan peranti ini tidak dibenarkan."
+        code = secrets.token_hex(3).upper()
+        self.pending = {
+            "code": code, "entity": entity_id,
+            "domain": entity_id.split(".", 1)[0],
+            "service": service, "expires": time.monotonic() + 180,
+        }
+        action = "MATIKAN" if service == "turn_off" else "HIDUPKAN"
+        return (f"🔒 Sahkan: {action} {self.friendly(row)} ({entity_id})?\n"
+                "Balas ok / yes / confirm / /confirm dalam 3 minit. Balas batal untuk batalkan.")
+
     async def handle(self, session, prompt):
         text = str(prompt).strip()
         lower=text.lower()
         if not text: return "/ai <soalan> untuk bersembang dengan Hermes."
+        # A numbered reply selects a candidate, but NEVER performs the action.
+        # A second explicit positive acknowledgement is still required.
+        selection = self.pending_selection
+        if selection and re.fullmatch(r"[1-9]", lower):
+            self.pending_selection = None
+            if time.monotonic() >= selection["expires"]:
+                return "Pilihan dah tamat. Nyatakan arahan sekali lagi."
+            index = int(lower) - 1
+            if not 0 <= index < len(selection["entities"]):
+                return "Nombor tiada dalam senarai. Nyatakan arahan sekali lagi."
+            entity_id = selection["entities"][index]
+            try:
+                row = await self.entity(session, entity_id)
+                if not self.safe_actuator(entity_id, row):
+                    return "Peranti itu tidak boleh dikawal sekarang."
+            except Exception:
+                return "Gagal semak peranti HA. Tiada arahan dihantar."
+            return self.propose_control(entity_id, row, selection["service"])
+        if self.pending_selection and lower not in ("/cancel", "cancel", "batal", "/batal"):
+            self.pending_selection = None
         # A reply to a specific outstanding owner request can be a simple "ok".
         # No other text can approve an action, and no device is changed by a
         # model response. /confirm without a code MUST NOT consume the request.
@@ -323,6 +357,7 @@ class HomeTools:
             self.pending = None
         if lower in ("/cancel","cancel","batal","/batal"):
             self.pending=None
+            self.pending_selection=None
             return "Arahan kawalan dibatalkan."
         if lower in ("/hahelp","/homehelp","/rumahhelp"):
             return ("Hermes rumah:\n/rumah — ringkasan\n/ram — prestasi RPi4\n/cctv — status entity kamera\n"
@@ -342,17 +377,24 @@ class HomeTools:
                 return "Arahan kawalan ini belum dibenarkan. Hanya light/fan ON/OFF."
             try: states=await self.states(session)
             except Exception: return "Tak dapat akses status HA sekarang. Tiada arahan dihantar."
-            item,error=self.exact_safe_target(target,states)
-            if error: return error
-            entity,row=item
-            domain=entity.split(".",1)[0]
             service="turn_off" if verb in ("matikan","padamkan","tutup","off","turn off","light off","switch off") else "turn_on"
-            code=secrets.token_hex(3).upper()
-            self.pending={"code":code,"entity":entity,"domain":domain,"service":service,"expires":time.monotonic()+180}
-            label=self.friendly(row)
-            action="MATIKAN" if service=="turn_off" else "HIDUPKAN"
-            return (f"🔒 Sahkan: {action} {label} ({entity})?\n"
-                    f"Balas ok / yes / confirm / /confirm dalam 3 minit. Balas batal untuk batalkan.")
+            item,error=self.exact_safe_target(target,states)
+            if error:
+                safe=[(eid,row) for eid,row in self.exact_entity(states,target)
+                      if self.safe_actuator(eid,row)]
+                if len(safe)>1:
+                    self.pending_selection={
+                        "entities":[eid for eid,_ in safe[:9]],
+                        "service":service,
+                        "expires":time.monotonic()+120,
+                    }
+                    numbered="\n".join(f"{i}. {self.friendly(row)} ({eid})"
+                                       for i,(eid,row) in enumerate(safe[:9],1))
+                    return ("Ada beberapa peranti yang sepadan:\n"+numbered+
+                            "\nBalas nombor pilihan dalam 2 minit. Lepas tu aku minta confirm.")
+                return error
+            entity,row=item
+            return self.propose_control(entity,row,service)
         # Dynamic catalogue; every HA domain is readable (not automatically controllable).
         if lower in ("/entities","/devices","senarai entity","semua entity","list entities","tunjuk semua entity"):
             try: return self.full_inventory(await self.states(session))
