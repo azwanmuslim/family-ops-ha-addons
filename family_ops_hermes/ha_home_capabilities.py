@@ -308,11 +308,14 @@ class HomeTools:
                 except Exception:
                     return "Gagal semak peranti HA. Tiada arahan dihantar."
                 return self.propose_control(entity_id, row, selection["service"])
-            if re.search(r"\d", lower):
+            if WRITE.match(text):
+                # A new explicit device command supersedes the previous menu.
+                self.pending_selection = None
+            elif re.search(r"\d", lower):
                 return ("Aku nampak nombor pilihan yang tak jelas. "
                         "Balas SATU nombor sahaja, contoh '2' atau 'No 2'. "
                         "Pilihan asal masih tersedia.")
-            if lower not in ("/cancel", "cancel", "batal", "/batal"):
+            elif lower not in ("/cancel", "cancel", "batal", "/batal"):
                 self.pending_selection = None
         # While a control is awaiting YES, an accidental extra digit must not
         # cancel that approval or become a free-form model hallucination.
