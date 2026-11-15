@@ -46,7 +46,7 @@ if config_path.exists():
 
 timezone = str(options.get('timezone') or 'UTC').strip() or 'UTC'
 model_provider = str(options.get('model_provider') or 'openai-codex').strip() or 'openai-codex'
-model_name = str(options.get('model_name') or 'gpt-5.6-terra').strip() or 'gpt-5.6-terra'
+model_name = str(options.get('model_name') or 'gpt-6.1-sol').strip() or 'gpt-6.1-sol'
 model_base_url = str(options.get('model_base_url') or '').strip()
 gateway_timeout_raw = options.get('gateway_timeout')
 gateway_timeout = 1800 if gateway_timeout_raw in (None, '') else int(gateway_timeout_raw)
@@ -157,5 +157,14 @@ print('true' if options.get('codex_smoke_once') else 'false')
 PY
 )"
 export CODEX_SMOKE_ONCE
+
+HA_TELEGRAM_BRIDGE="$("$HERMES_PYTHON" - <<'PY'
+from pathlib import Path
+import json
+options = json.loads(Path("/data/options.json").read_text(encoding="utf-8"))
+print("true" if options.get("ha_telegram_bridge") else "false")
+PY
+)"
+export HA_TELEGRAM_BRIDGE
 
 exec /opt/hermes/docker/entrypoint.sh /addon-run.sh
