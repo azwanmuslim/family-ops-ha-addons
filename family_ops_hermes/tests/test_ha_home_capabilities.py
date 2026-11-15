@@ -62,7 +62,7 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
             "state":"off","attributes":{"friendly_name":"Car Porch Cam Illuminator"}
         }
         answer=await self.tools.handle(self.session,"on light.nvr_car_porch_cam_illuminator")
-        self.assertIn("tak jumpa",answer)
+        self.assertIn("disekat",answer)
         self.assertFalse(self.session.calls)
 
     async def test_control_needs_confirmation_and_no_early_write(self):
@@ -89,6 +89,53 @@ class HomeCapabilityTests(unittest.IsolatedAsyncioTestCase):
         result=await self.tools.handle(self.session,"/confirm WRONG")
         self.assertIn("kod salah",result)
         self.assertIsNone(self.tools.pending)
+        self.assertFalse(self.session.calls)
+
+    async def test_catalog_reads_all_domains(self):
+        self.session.rows["lock.smart_lock"]={"entity_id":"lock.smart_lock","state":"locked","attributes":{"friendly_name":"Smart Lock"}}
+        self.session.rows["switch.doorlamp"]={"entity_id":"switch.doorlamp","state":"off","attributes":{"friendly_name":"Door Lamp"}}
+        result=await self.tools.handle(self.session,"/entities")
+        self.assertIn("lock: 1",result)
+        self.assertIn("switch: 1",result)
+        self.assertIn("sensor:",result)
+        result=await self.tools.handle(self.session,"/entity lock.smart_lock")
+        self.assertIn("locked",result)
+        result=await self.tools.handle(self.session,"/entities switch")
+        self.assertIn("switch.doorlamp",result)
+        self.assertFalse(self.session.calls)
+
+    async def test_house_lamps_are_switches(self):
+        self.session.rows["switch.doorlamp"]={"entity_id":"switch.doorlamp","state":"on","attributes":{"friendly_name":"Door Lamp"}}
+        self.session.rows["switch.carporchlamp"]={"entity_id":"switch.carporchlamp","state":"off","attributes":{"friendly_name":"Car Porch Lamp"}}
+        self.session.rows["light.nvr_car_porch_cam_infrared"]={"entity_id":"light.nvr_car_porch_cam_infrared","state":"on","attributes":{"friendly_name":"Car Porch Cam Infrared"}}
+        for question in ("Lampu mana yang sedang menyala?","Lampu ada yg terbuka?","Ada lampu yang on?"):
+            answer=await self.tools.handle(self.session,question)
+            self.assertIn("Door Lamp",answer)
+            self.assertIn("1 ON",answer)
+            self.assertNotIn("Car Porch Cam Infrared",answer)
+        self.assertFalse(self.session.calls)
+
+    async def test_rojak_door_lamp_needs_confirmation(self):
+        self.session.rows["switch.doorlamp"]={"entity_id":"switch.doorlamp","state":"off","attributes":{"friendly_name":"Door Lamp"}}
+        for question in ("Buka door lamp","Boleh buka lampu pintu luar ?","Light on door lamp","Hidupkan switch.doorlamp"):
+            answer=await self.tools.handle(self.session,question)
+            self.assertIn("/confirm",answer)
+            self.assertFalse(self.session.calls)
+            self.assertEqual(self.tools.pending["entity"],"switch.doorlamp")
+            self.tools.pending=None
+        answer=await self.tools.handle(self.session,"Buka door lamp")
+        code=self.tools.pending["code"]
+        confirmed=await self.tools.handle(self.session,"/confirm "+code)
+        self.assertIn("disahkan HA",confirmed)
+        self.assertEqual(self.session.rows["switch.doorlamp"]["state"],"on")
+        self.assertEqual(len(self.session.calls),1)
+
+    async def test_gate_and_camera_switch_stay_blocked(self):
+        self.session.rows["switch.bothgate"]={"entity_id":"switch.bothgate","state":"off","attributes":{"friendly_name":"Autogate Both gate"}}
+        self.session.rows["switch.nvr_cam_motion_detection"]={"entity_id":"switch.nvr_cam_motion_detection","state":"on","attributes":{"friendly_name":"Cam Motion Detection"}}
+        for q in ("Buka switch.bothgate","Hidupkan switch.nvr_cam_motion_detection"):
+            answer=await self.tools.handle(self.session,q)
+            self.assertNotIn("/confirm",answer)
         self.assertFalse(self.session.calls)
 
     async def test_proactive_requires_sustained_condition_and_caps(self):
