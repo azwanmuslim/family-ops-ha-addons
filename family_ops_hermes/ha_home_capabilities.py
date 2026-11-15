@@ -223,15 +223,17 @@ class HomeTools:
             names.update(self.normalize_name(alias) for alias in aliases.get(entity_id, set()))
             catalog.append((entity_id, row, names))
         exact = [(entity_id, row) for entity_id, row, names in catalog if wanted in names]
-        if exact:
-            return exact
-        # Partial matching is used ONLY to show a candidate selection when a
-        # room/fixture is underspecified. Never automatically execute a group.
+        # A numbered specific fixture wins an exact match; an unnumbered
+        # room/fixture phrase (e.g. "lampu ruang tamu") must still inspect
+        # every numbered lamp in that room and ask which one to control.
         tokens = set(wanted.split())
+        if exact and (any(token.isdigit() for token in tokens) or len(tokens) < 2):
+            return exact
         if len(tokens) < 2:
-            return []
-        return [(entity_id, row) for entity_id, row, names in catalog
-                if any(tokens.issubset(set(alias.split())) for alias in names)]
+            return exact
+        similar = [(entity_id, row) for entity_id, row, names in catalog
+                   if any(tokens.issubset(set(alias.split())) for alias in names)]
+        return similar if len(similar) > len(exact) else exact
 
     def entity_state(self, states, name):
         matches = self.exact_entity(states, name)
