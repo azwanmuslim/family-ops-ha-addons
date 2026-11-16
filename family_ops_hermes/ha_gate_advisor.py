@@ -25,7 +25,6 @@ INTERVAL_SECONDS = 120
 # ROIs are normalized to the 1536x864 CCTV composition; they exclude public street.
 ROIS = {
     "middle": (.39, .66, .42, .68),
-    "left": (.31, .58, .37, .76),
 }
 # Binary feature data only (16x16 grayscale each), not source photos.
 TEMPLATES = {
@@ -33,15 +32,7 @@ TEMPLATES = {
         "closed": "eNoFwd1OglAAAOCXc8514ZbDQU1nCkZHkf8fTweGRxGDwAOIBzTX5txaF9XWhW/SA/V9f1c8RjkFuReFuigHlhHWNSl4bNrACRboWNEqX+O+rUDkQeSUhKQYPIOvDELkWkoWOZK9+FbPuYcsBUiyNI+z8Ef7zEJdlUTgBuu4plflLanns8n00d/sDu/pr+7IFMvylN/S/HApP2TzNXKtmdBPaHU+JRcTk40x4R/YXVaejvFeD4qlyg8EkBTJyveWvEaQZnnoKY4wVId9TlAMktqD7rYwx0OOaXcR9tQe0/Gle7bTajVuNXHEjiC86zEMe9NoNrk2Z77Eq390PXqH",
         "open": "eNoFwYlOggAAANCvbOXaai5Gil1LRhJ5ICUb0kRdDlCjQLkjOYSKxFaUuvLgj3pvuVnGYeC71rDb6/Otxuzdt13H0fqSzHXZJvU6erJ0TTYCj2cYmqEMVVEUzf9dT9uNBkXWVVlUDHuRrL5ZuoaXi+JAUs1gnSSxVC0VCezh/lEfz5PNXzxhMBhBhaHlRLPlavEZti8vzrKm679FXz+zeWTeluDMvuePph9hOInGEo5A4LZt+i+u57iBK17lC/DpsyHxPYG9E3SJb9WJE1nmaDx/VOYEccBVDlKKRsLHh7kC0eEpLJvZ65A5IA2kt6BrDEHRWhXMITCU2tkFgXP0psmJ/yatmhI=",
     },
-    "left": {
-        "closed": "eNoBAAH//uTl5+jo6Ojn6Ofm4NK4moTk5OTk4+Tl4NC4nIN5g4WV39/g3M64oIuEgo+Fbo6Ahcy6o4yGiI2Vl4+LfGJ+b3V1hpCQk5SPiYJ4d4duq4F6eIWLhYF9dXWAhpOkcK6GhG5vcHB2fYOIkZmaqW2cf5lubnh+gYyRlJufk6dmeH+Rem9/iI6Sk5egnYqeapGKhX9ofIWNjZCOjYt7jF+Ihn5/aHeAg4qMfXJrXGBRbHJ+aFpocHiDdYNejetfaVYOMFDGED?ij[aVRbv f".replace(" ",""),
-        "open": "eNoBAAH//tTU1dbW19bW1tTU09HNycHT09PS0NLT1NPRzMbBurOtzczNzMvMy8bAu7i1sKmkn8jIyMXDu7Kvr62sqauurZu9ubWsqqunpqeprL/MzbaQoaKjoaKlpKOprLzQ0c++mpmipKKenqGlrrrK0c/Jwrmgn5manamxtLm/xsnJx72tmJydpqu0s7W+vLq4vbyznZmVl6GprauopaSmoKOrrZ+Vk5KYm6imkYN8cHGHlqCgd3Z8g4ycjHFoZmRlYnuLhnFzb2pldXt6dWVbWlpgZnVgYGRga4mIe3JzWE9QWW+EVFJXYHJ2d2trZFdZbH+RnGdbWmNfXWN2fX5/jaHVmJ3q",
-    },
 }
-# POC: middle ROI is calibrated; a secondary ROI may be added after more samples.
-# The left gate area is intentionally not used until a second calibration proves
-# stable. Image classification NEVER authorizes gate actuation.
-TEMPLATES["left"] = {}
 
 def _decode(encoded):
     raw = zlib.decompress(base64.b64decode(encoded, validate=True))
