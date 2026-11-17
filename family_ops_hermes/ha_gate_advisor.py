@@ -130,7 +130,8 @@ class GateAdvisor:
             image=await r.read()
             if len(image)>6000000: return "UNKNOWN",0.0
         if self.dataset.due():
-            self.dataset.capture_routine(image, sun.get("state", "unknown"))
+            if self.dataset.capture_routine(image, sun.get("state", "unknown")):
+                print("HERMES_GATE_DATASET: sample_saved=true", flush=True)
         if not sunlight:
             return "UNKNOWN",0.0
         learned, margin = self.dataset.classify(image)
