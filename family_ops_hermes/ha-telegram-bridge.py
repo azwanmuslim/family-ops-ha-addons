@@ -16,6 +16,7 @@ from pathlib import Path
 
 import aiohttp
 from ha_home_capabilities import HomeTools
+from ha_gate_advisor import GateAdvisor
 
 OWNER_CHAT = os.environ.get("HA_TELEGRAM_CHAT_ID", "").strip()
 OWNER_USER = os.environ.get("HA_TELEGRAM_USER_ID", "").strip()
@@ -239,8 +240,11 @@ async def main():
     timeout = aiohttp.ClientTimeout(total=130)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         home_tools = HomeTools(send)
+        advisor = GateAdvisor(send)
+        home_tools.gate_advisor = advisor
         await asyncio.gather(worker(session, home_tools), listen(session),
-                             home_tools.proactive_loop(session))
+                             home_tools.proactive_loop(session),
+                             advisor.loop(session))
 
 
 if __name__ == "__main__":
