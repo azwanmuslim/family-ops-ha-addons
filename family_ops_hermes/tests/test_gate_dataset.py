@@ -28,6 +28,14 @@ class DatasetTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(store.classify(jpeg()), ("UNKNOWN", 0.0))
 
+    def test_crop_includes_full_gate_not_right_hand_fence_only(self):
+        # Normalized X must include the left gate leaf as seen in owner screenshots,
+        # and reach the right gate post; keep a safe Y band around the gate.
+        self.assertLessEqual(ROI[0], 0.20)
+        self.assertGreaterEqual(ROI[1], 0.85)
+        self.assertLessEqual(ROI[2], 0.36)
+        self.assertGreaterEqual(ROI[3], 0.84)
+
     def test_crop_not_full_camera_and_small(self):
         crop, vector = feature(jpeg())
         self.assertEqual(len(vector), 256)
