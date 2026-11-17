@@ -65,6 +65,18 @@ class DatasetTests(unittest.TestCase):
             metas = list(Path(temp).glob("*.json"))
             self.assertFalse(json.loads(metas[0].read_text())["verified"])
 
+    def test_manual_snapshot_is_unknown_and_does_not_reset_periodic_timer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            sid = store.save(jpeg(), source="manual_request",
+                             sun="above_horizon", return_id=True)
+            self.assertRegex(sid, r"^[0-9]{8}T[0-9]{6}-[a-f0-9]{8}$")
+            self.assertEqual(store.review_queue()[0]["id"], sid)
+            self.assertTrue(store.due())
+            self.assertEqual(store.stats()["unverified"], 1)
+            self.assertEqual(store.stats()["open"], 0)
+            self.assertEqual(store.stats()["closed"], 0)
+
     def test_owner_verified_distinct_from_unverified(self):
         with tempfile.TemporaryDirectory() as temp:
             store = GateDataset(enabled=True, root=temp)

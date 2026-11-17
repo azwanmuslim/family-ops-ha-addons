@@ -1,27 +1,64 @@
 #!/usr/bin/env python3
-"""Admin HA ingress-only Gate Vision manual labelling of EXISTING crop files.
+"""Private HA ingress Gate Vision capture and owner-reviewed labelling.
 
-No public host port, no camera access, no GPS, no switch/cover/motor calls.
-HA Supervisor authenticates the ingress; CSRF protects state-changing POSTs.
+On-demand snapshots use one fixed HA camera and local cropped storage only.
+No public host port, GPS, switch, cover or motor calls.
+Supervisor ingress authenticates; CSRF protects state-changing POSTs.
 """
+import asyncio
 import hmac
 import json
 import os
 from pathlib import Path
 import secrets
+import time
 
-from aiohttp import web
-from ha_gate_dataset import GateDataset
+from aiohttp import ClientSession, ClientTimeout, web
+from ha_gate_dataset import CAMERA, GateDataset
 
 PORT = 9131
 HTML = Path("/usr/share/nginx/html/gate-review.html")
+API = "http://supervisor/core/api"
+CAPTURE_COOLDOWN_SECONDS = 3
 
 
-def create_app(dataset=None):
+async def capture_from_ha():
+    """Get a fresh frame only from the configured local HA camera."""
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        raise RuntimeError("supervisor_token_unavailable")
+    auth = {"Authorization": "Bearer " + token}
+    frame_headers = {**auth, "Cache-Control": "no-cache", "Pragma": "no-cache"}
+    async with ClientSession(timeout=ClientTimeout(total=26)) as session:
+        async with session.get(
+            API + "/camera_proxy/" + CAMERA, headers=frame_headers,
+            params={"_": str(time.time_ns())},
+        ) as response:
+            if response.status != 200:
+                raise RuntimeError("camera_capture_failed")
+            if response.content_length is not None and response.content_length > 6_000_000:
+                raise ValueError("camera_image_too_large")
+            jpeg = await response.read()
+        # Optional metadata, never a prerequisite for a short-lived OPEN event.
+        sun = "unknown"
+        try:
+            async with session.get(API + "/states/sun.sun", headers=auth, timeout=3) as response:
+                if response.status == 200:
+                    state = await response.json()
+                    sun = str(state.get("state", "unknown"))[:24]
+        except Exception:
+            pass
+    return jpeg, sun
+
+
+def create_app(dataset=None, capture_frame=None):
     dataset = dataset if dataset is not None else GateDataset()
     csrf = secrets.token_urlsafe(32)
     app = web.Application(client_max_size=2048)
     app["dataset"] = dataset
+    app["capture_frame"] = capture_frame if capture_frame is not None else capture_from_ha
+    app["last_manual_capture"] = None
+    app["capture_lock"] = asyncio.Lock()
 
     async def page(request):
         nonce = secrets.token_urlsafe(20)
@@ -90,12 +127,41 @@ def create_app(dataset=None):
         return web.json_response({"ok": True, "label": value},
                                  headers={"Cache-Control": "no-store"})
 
-    import asyncio
+    async def capture(request):
+        if not hmac.compare_digest(request.headers.get("X-Gate-Review-CSRF", ""), csrf):
+            raise web.HTTPForbidden(text="Sesi tidak sah")
+        if not dataset.enabled:
+            return web.json_response({"error": "Gate learning belum diaktifkan."}, status=503)
+        if request.content_length not in (None, 0):
+            raise web.HTTPBadRequest(text="Snapshot tidak memerlukan input")
+        async with app["capture_lock"]:
+            last = app["last_manual_capture"]
+            if last is not None and time.monotonic() - last < CAPTURE_COOLDOWN_SECONDS:
+                return web.json_response(
+                    {"error": "Terlalu cepat. Cuba semula beberapa saat lagi."},
+                    status=429, headers={"Cache-Control": "no-store"})
+            try:
+                jpeg, sun = await app["capture_frame"]()
+                sample_id = dataset.save(
+                    jpeg, source="manual_request", sun=sun, return_id=True)
+                if not isinstance(sample_id, str):
+                    raise RuntimeError("dataset_disabled")
+            except Exception:
+                dataset.errors += 1
+                return web.json_response(
+                    {"error": "Snapshot CCTV gagal. Tiada sampel disimpan."},
+                    status=503, headers={"Cache-Control": "no-store"})
+            app["last_manual_capture"] = time.monotonic()
+        return web.json_response(
+            {"ok": True, "id": sample_id, "verified": False},
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
     app["label_lock"] = asyncio.Lock()
     app.router.add_get("/", page)
     app.router.add_get("/api/list", listing)
     app.router.add_get("/api/photo/{sample_id}", photo)
     app.router.add_post("/api/label", label)
+    app.router.add_post("/api/capture", capture)
     return app
 
 

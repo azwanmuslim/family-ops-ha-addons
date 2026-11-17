@@ -25,7 +25,12 @@ class GateReviewTests(unittest.IsolatedAsyncioTestCase):
         self.dataset = GateDataset(enabled=True, root=self.temp.name)
         self.dataset.save(jpeg(), label="UNKNOWN", source="periodic")
         self.sample = self.dataset.review_queue()[0]["id"]
-        self.server = TestServer(create_app(self.dataset))
+        self.capturer = {"fail": False}
+        async def fake_capture():
+            if self.capturer["fail"]:
+                raise RuntimeError("camera_offline")
+            return jpeg(), "above_horizon"
+        self.server = TestServer(create_app(self.dataset, capture_frame=fake_capture))
         self.client = TestClient(self.server)
         await self.client.start_server()
 
@@ -62,6 +67,50 @@ class GateReviewTests(unittest.IsolatedAsyncioTestCase):
         second = await self.client.post("/api/label", json=body,
             headers={"X-Gate-Review-CSRF": data["csrf"]})
         self.assertEqual(second.status, 409)
+
+    async def test_on_demand_capture_creates_unverified_image_then_labels(self):
+        token = (await (await self.client.get("/api/list")).json())["csrf"]
+        denied = await self.client.post("/api/capture")
+        self.assertEqual(denied.status, 403)
+        malformed = await self.client.post("/api/capture", data=b"unexpected",
+            headers={"X-Gate-Review-CSRF": token})
+        self.assertEqual(malformed.status, 400)
+        saved = await self.client.post("/api/capture",
+            headers={"X-Gate-Review-CSRF": token})
+        self.assertEqual(saved.status, 200)
+        data = await saved.json()
+        self.assertFalse(data["verified"])
+        self.assertNotEqual(data["id"], self.sample)
+        record = json.loads((Path(self.temp.name) / (data["id"] + ".json")).read_text())
+        self.assertEqual(record["label"], "UNKNOWN")
+        self.assertFalse(record["verified"])
+        self.assertEqual(record["source"], "manual_request")
+        self.assertEqual(record["roi"], list(ROI))
+        self.assertIsNone(self.dataset.last_routine)
+        self.assertEqual(self.dataset.stats()["unverified"], 2)
+        image = await self.client.get("/api/photo/" + data["id"])
+        self.assertEqual(image.status, 200)
+        labelled = await self.client.post("/api/label",
+            json={"id": data["id"], "label": "OPEN"},
+            headers={"X-Gate-Review-CSRF": token})
+        self.assertEqual(labelled.status, 200)
+        self.assertEqual(self.dataset.stats()["open"], 1)
+
+    async def test_capture_cooldown_and_camera_failure(self):
+        token = (await (await self.client.get("/api/list")).json())["csrf"]
+        self.capturer["fail"] = True
+        failed = await self.client.post("/api/capture",
+            headers={"X-Gate-Review-CSRF": token})
+        self.assertEqual(failed.status, 503)
+        self.assertEqual(self.dataset.stats()["unverified"], 1)
+        self.capturer["fail"] = False
+        saved = await self.client.post("/api/capture",
+            headers={"X-Gate-Review-CSRF": token})
+        self.assertEqual(saved.status, 200)
+        throttled = await self.client.post("/api/capture",
+            headers={"X-Gate-Review-CSRF": token})
+        self.assertEqual(throttled.status, 429)
+        self.assertEqual(self.dataset.stats()["unverified"], 2)
 
     async def test_reject_invalid_labels_and_path(self):
         data = await (await self.client.get("/api/list")).json()

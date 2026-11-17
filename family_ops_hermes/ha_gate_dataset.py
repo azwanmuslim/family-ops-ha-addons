@@ -116,7 +116,7 @@ class GateDataset:
                 except OSError:
                     pass
 
-    def save(self, jpeg, label="UNKNOWN", source="periodic", sun="unknown"):
+    def save(self, jpeg, label="UNKNOWN", source="periodic", sun="unknown", *, return_id=False):
         if not self.enabled:
             return False
         if label not in ("UNKNOWN", "OPEN", "CLOSED"):
@@ -145,7 +145,7 @@ class GateDataset:
             raise
         self.last_saved_utc = dt.datetime.fromtimestamp(stamp, dt.timezone.utc).isoformat()
         self.prune()
-        return True
+        return sample_id if return_id else True
 
     def capture_routine(self, jpeg, sun):
         if not self.due():
