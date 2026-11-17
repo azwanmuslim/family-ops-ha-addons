@@ -23,7 +23,10 @@ MAX_BYTES = 80 * 1024 * 1024
 MAX_FILES = 800
 # Provisional camera-relative gate/driveway entrance region. Recalibrate using
 # verified owner frames before considering vision safe for automatic actions.
-ROI = (0.54, 0.99, 0.19, 0.67)
+# Calibrated on owner's full-frame OPEN and CLOSED views (same 16:9 camera pose).
+# Include the whole moving gate and opening; older right-only crops remain isolated
+# by the per-sample ROI metadata and must never contribute to the new classifier.
+ROI = (0.16, 0.89, 0.35, 0.85)
 
 
 def feature(image):
