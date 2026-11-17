@@ -176,7 +176,7 @@ PY
 )"
 export HA_GATE_ADVISOR
 
-HA_GATE_DATASET="$("$HERMES_PYTHON" - <<\'PY\'
+HA_GATE_DATASET="$("$HERMES_PYTHON" - <<'PY'
 import json
 from pathlib import Path
 options = json.loads(Path("/data/options.json").read_text(encoding="utf-8"))
