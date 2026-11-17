@@ -167,6 +167,15 @@ PY
 )"
 export HA_TELEGRAM_BRIDGE
 
+HA_GATE_ADVISOR="$("$HERMES_PYTHON" - <<'PY'
+from pathlib import Path
+import json
+options = json.loads(Path("/data/options.json").read_text(encoding="utf-8"))
+print("true" if options.get("ha_gate_advisor", False) else "false")
+PY
+)"
+export HA_GATE_ADVISOR
+
 readarray -t TG_OPTIONS < <("$HERMES_PYTHON" - <<'PY'
 import json
 from pathlib import Path
