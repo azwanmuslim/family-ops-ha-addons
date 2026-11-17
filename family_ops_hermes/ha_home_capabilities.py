@@ -120,12 +120,15 @@ class HomeTools:
         return out + "\nNota: Entity tersedia tidak menjamin RTSP/stream sedang berfungsi."
 
     def gate_summary(self, states):
+        advisor = getattr(self, "gate_advisor", None)
+        visual = ("📷 Visual gate (POC): " + advisor.latest + "\n"
+                  if advisor is not None else "📷 Visual gate: belum tersedia\n")
         gates = self.gate_items(states)
         if not gates:
-            return "Aku tak jumpa sensor/entity gate dalam HA. Belum boleh sahkan gate tutup atau buka."
-        return "🚧 Status gate:\n" + "\n".join(
+            return visual + "Tiada sensor fizikal open/closed disahkan. Switch.bothgate ialah pulse, BUKAN sensor gate. Cadangan sahaja."
+        return (visual + "🚧 Sensor gate:\n" + "\n".join(
             f"• {self.friendly(row)}: {self.state(row)}" for _,row in gates[:8]
-        ) + "\nSemakan sahaja; tiada arahan buka/tutup dihantar."
+        ) + "\nSemakan sahaja; tiada arahan buka/tutup dihantar.")
 
     def light_summary(self, states):
         # Real household lights are commonly switch.*, not light.*.
