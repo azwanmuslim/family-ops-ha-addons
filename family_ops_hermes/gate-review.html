@@ -16,7 +16,7 @@ img{width:100%;height:auto;max-height:530px;object-fit:contain;background:#050b1
 .actions{display:flex;gap:10px;margin:14px 0}
 button{border:0;border-radius:11px;padding:13px 10px;color:white;font-size:1rem;font-weight:700;cursor:pointer;flex:1;min-height:48px}
 button:disabled{opacity:.35;cursor:wait}
-.open{background:#0e8954}.closed{background:#b65532}.skip{background:#485b70}
+.open{background:#0e8954}.closed{background:#b65532}.skip{background:#485b70}.snapshot{background:#2563a6;flex:0 0 auto;min-width:185px}
 .top{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .muted{color:#afbdd0;font-size:.88rem}
 #info{color:#e6edf6;line-height:1.5}
@@ -24,7 +24,7 @@ button:disabled{opacity:.35;cursor:wait}
 a{color:#8bdbff}
 #photo[hidden],#controls[hidden]{display:none}
 .notice{background:#263448;border-left:3px solid #e1ac5b;padding:12px;border-radius:8px}
-@media(max-width:420px){body{padding:10px}.actions{gap:6px}button{font-size:.89rem}.panel{padding:12px}.counts{gap:5px}}
+@media(max-width:420px){body{padding:10px}.actions{gap:6px}button{font-size:.89rem}.panel{padding:12px}.counts{gap:5px}.capture-row{flex-direction:column;align-items:stretch}.snapshot{width:100%}}
 </style>
 </head>
 <body>
@@ -38,6 +38,15 @@ a{color:#8bdbff}
       <div class="stat"><strong id="pending">–</strong><small>Belum disahkan</small></div>
       <div class="stat"><strong id="openCount">–</strong><small>OPEN</small></div>
       <div class="stat"><strong id="closedCount">–</strong><small>CLOSED</small></div>
+    </div>
+  </section>
+  <section class="panel">
+    <div class="top capture-row">
+      <div>
+        <strong>📸 Snapshot on demand</strong>
+        <p class="muted" style="margin:5px 0">Bila pagar terbuka, tekan terus. Gambar baharu akan muncul untuk dilabel OPEN atau CLOSED.</p>
+      </div>
+      <button type="button" id="capture" class="snapshot">📸 Snapshot Now</button>
     </div>
   </section>
   <section class="panel">
@@ -57,7 +66,7 @@ a{color:#8bdbff}
   </section>
   <section class="panel">
     <div class="notice">Gambar crop lama yang tidak menunjukkan gate tidak digunakan untuk belajar. <strong id="legacy">0</strong> sampel lama diasingkan.</div>
-    <p class="muted" style="margin-top:12px">Capture baharu setiap 30 minit. Simpan maksimum 14 hari. Tiada kawalan motor pagar atau penghantaran gambar ke cloud.</p>
+    <p class="muted" style="margin-top:12px">Capture automatik setiap 30 minit + snapshot manual bila perlu. Simpan maksimum 14 hari. Tiada kawalan motor pagar atau penghantaran gambar ke cloud.</p>
     <p><a href="../">Kembali ke Hermes</a></p>
   </section>
 </main>
@@ -68,7 +77,7 @@ const photo=el("photo");
 let items=[], index=0, csrf="", busy=false;
 function setBusy(on){
  busy=on;
- for(const id of ["markOpen","markClosed","skip","refresh"])el(id).disabled=on;
+ for(const id of ["markOpen","markClosed","skip","refresh","capture"])el(id).disabled=on;
 }
 function show(){
  const active=items[index];
@@ -88,7 +97,7 @@ function show(){
    " (Malaysia) · "+(active.sun==="above_horizon"?"Siang":"Malam/gelap");
  photo.src="api/photo/"+encodeURIComponent(active.id);
 }
-async function reload(){
+async function reload(focusId=null){
  if(busy)return;
  setBusy(true);
  el("message").textContent="";
@@ -98,13 +107,32 @@ async function reload(){
   const j=await r.json();
   csrf=j.csrf;
   items=j.samples||[];
-  index=0;
+  index=Math.max(0,items.findIndex(sample=>sample.id===focusId));
   el("pending").textContent=j.counts.pending;
   el("openCount").textContent=j.counts.open;
   el("closedCount").textContent=j.counts.closed;
   el("legacy").textContent=j.counts.legacy;
   if(!j.enabled)throw Error("Gate dataset belum diaktifkan");
   show();
+  return true;
+ }catch(err){el("message").textContent=err.message;return false}
+ finally{setBusy(false)}
+}
+async function capture(){
+ if(busy||!csrf)return;
+ setBusy(true);
+ el("message").textContent="Mengambil snapshot CCTV terkini…";
+ try{
+  const r=await fetch("api/capture",{
+   method:"POST",credentials:"same-origin",cache:"no-store",
+   headers:{"X-Gate-Review-CSRF":csrf}
+  });
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok)throw Error(data.error||"Snapshot gagal ("+r.status+").");
+  setBusy(false);
+  if(await reload(data.id)){
+   el("message").textContent="✅ Snapshot baharu disimpan. Semak gambar kemudian tekan OPEN atau CLOSED.";
+  }
  }catch(err){el("message").textContent=err.message}
  finally{setBusy(false)}
 }
@@ -136,7 +164,8 @@ el("skip").addEventListener("click",()=>{
  if(!items.length)return;
  index=(index+1)%items.length;show();el("message").textContent="Gambar dilangkau, belum dilabel.";
 });
-el("refresh").addEventListener("click",reload);
+el("refresh").addEventListener("click",()=>reload());
+el("capture").addEventListener("click",capture);
 photo.addEventListener("error",()=>{el("message").textContent="Gagal paparkan gambar. Cuba Refresh."});
 reload();
 </script>

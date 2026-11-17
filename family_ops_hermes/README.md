@@ -61,3 +61,11 @@ All live reads use the existing Home Assistant API credentials inside the add-on
 - An additional number after selecting a device does not cancel the requested confirmation. The user is reminded to say `ok`/`confirm` or `batal`.
 - A new explicit named-device command supersedes the old menu; no LLM interpretation or service call is used for menu selection.
 - All physical actions still require the separate owner-only positive acknowledgement.
+
+## Gate Vision on-demand snapshot (v43)
+
+- Open the Home Assistant **Hermes Agent > Gate Sample Review** page (ingress-only).
+- Press **Snapshot Now** while the gate is visibly OPEN or CLOSED. It uses the fixed local `camera.nvr_car_porch_cam_sub` camera, bypassing the 30-minute routine schedule.
+- The new cropped picture appears immediately at the front of the review queue. Confirm **OPEN** or **CLOSED** only after inspecting that actual image. If the gate is moving, obstructed or too dark, use **SKIP**; an unverified photo never becomes training truth.
+- Capture requires the authenticated HA ingress and an anti-CSRF token, limits repeats to once per three seconds, and never invokes `switch.bothgate`, motor or Home Assistant control services. Raw image data stays in the add-on; 14-day local retention remains unchanged. Routine 30-minute snapshots continue unaffected.
+- After merging this version, refresh the HA add-on store and **update/restart Hermes** to load the new button and backend; GitHub source changes alone do not update a running add-on.
