@@ -7,6 +7,7 @@ One closed + one open example is NOT sufficient for production safety: unknown
 is the default. Night/rain/obscuration/changed camera pose must be revalidated.
 """
 import asyncio
+import contextlib
 import base64
 import datetime as dt
 import io
@@ -95,6 +96,8 @@ class GateAdvisor:
         self.latest = "UNKNOWN"
         self.enabled = os.environ.get("HA_GATE_ADVISOR", "false").lower() == "true"
         self.dataset = GateDataset()
+        self.dashboard_signature = None
+        self.dashboard_publish_at = 0.0
 
     def _save(self, **fields):
         safe = {
@@ -108,6 +111,80 @@ class GateAdvisor:
         tmp.write_text(json.dumps(safe, separators=(",",":"))+"\n",encoding="utf-8")
         tmp.chmod(0o600)
         tmp.replace(STATUS)
+
+    def dashboard_states(self, confidence=0.0):
+        """Whitelist safe numeric learning stats and visual state only."""
+        s = self.dataset.stats()
+        ready = min(s["open"], 6) + min(s["closed"], 6)
+        progress = round(100 * ready / 12)
+        last_capture = s.get("last_sample_utc") or "unknown"
+        return {
+            "sensor.hermes_gate_learning": {
+                "state": ("COLLECTING" if s["enabled"] and ready < 12 else
+                          "EVALUATION_PENDING" if s["enabled"] else "DISABLED"),
+                "attributes": {
+                    "friendly_name": "Hermes Gate Learning",
+                    "icon": "mdi:brain",
+                    "capture_interval_minutes": 30,
+                    "retention_days": 14,
+                    "mode": "suggestion_only",
+                    "model_accuracy_verified": False,
+                },
+            },
+            "sensor.hermes_gate_samples": {
+                "state": str(s["samples"]),
+                "attributes": {"friendly_name": "Gate Samples", "icon": "mdi:image-multiple"},
+            },
+            "sensor.hermes_gate_open_verified": {
+                "state": str(s["open"]),
+                "attributes": {"friendly_name": "OPEN Disahkan", "icon": "mdi:gate-open"},
+            },
+            "sensor.hermes_gate_closed_verified": {
+                "state": str(s["closed"]),
+                "attributes": {"friendly_name": "CLOSED Disahkan", "icon": "mdi:gate"},
+            },
+            "sensor.hermes_gate_unverified": {
+                "state": str(s["unverified"]),
+                "attributes": {"friendly_name": "Belum Disahkan", "icon": "mdi:help-circle-outline"},
+            },
+            "sensor.hermes_gate_training_progress": {
+                "state": str(progress),
+                "attributes": {"friendly_name": "Cukup Sampel Disahkan",
+                               "icon": "mdi:progress-check", "unit_of_measurement": "%"},
+            },
+            "sensor.hermes_gate_last_capture": {
+                "state": last_capture,
+                "attributes": {"friendly_name": "Capture Terakhir", "icon": "mdi:camera-clock"},
+            },
+            "sensor.hermes_gate_visual": {
+                "state": self.latest,
+                "attributes": {"friendly_name": "Visual Gate (POC)", "icon": "mdi:gate",
+                               "confidence_margin": round(float(confidence), 3),
+                               "is_physical_sensor": False},
+            },
+            "sensor.hermes_gate_collection_errors": {
+                "state": str(s["errors"]),
+                "attributes": {"friendly_name": "Capture Errors", "icon": "mdi:alert-circle-outline"},
+            },
+        }
+
+    async def publish_dashboard(self, session, confidence=0.0):
+        """Push virtual HA states; no external network and NO service/actuator calls."""
+        if not self.dataset.enabled:
+            return
+        payloads = self.dashboard_states(confidence)
+        signature = json.dumps(payloads, sort_keys=True)
+        now = time.monotonic()
+        if signature == self.dashboard_signature and now - self.dashboard_publish_at < 600:
+            return
+        for entity_id, payload in payloads.items():
+            async with session.post(API + "/states/" + entity_id,
+                                    headers=HEADERS, json=payload, timeout=18) as resp:
+                if resp.status not in (200, 201):
+                    raise RuntimeError("dashboard_state_write_failed")
+                await resp.read()
+        self.dashboard_signature = signature
+        self.dashboard_publish_at = now
 
     async def _states(self,session):
         async with session.get(API+"/states",headers=HEADERS,timeout=18) as r:
@@ -202,6 +279,8 @@ class GateAdvisor:
             self.latest="UNKNOWN"
             self.visual_history=[]
             self._save(reason="sensor_read_failed")
+            with contextlib.suppress(Exception):
+                await self.publish_dashboard(session)
             return
         self.latest=current
         self.visual_history.append((now,current))
@@ -213,6 +292,8 @@ class GateAdvisor:
         arriving=self._approaching(states,now)
         self._save(stable=stable,confidence_margin=confidence,people_all_away=away,
                    gps_approaching=bool(arriving))
+        with contextlib.suppress(Exception):
+            await self.publish_dashboard(session, confidence)
         if not self.enabled or not stable or self.sent_today>=4:
             return
         key=None
