@@ -37,6 +37,7 @@ COPY codex-model-discovery-v5.py /codex-model-discovery-v5.py
 COPY ha-telegram-bridge.py /ha-telegram-bridge.py
 COPY ha_home_capabilities.py /ha_home_capabilities.py
 COPY ha_gate_advisor.py /ha_gate_advisor.py
+COPY ha_gate_dataset.py /ha_gate_dataset.py
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh /addon-run.sh
 
