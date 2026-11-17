@@ -10,6 +10,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /run/nginx
 
+# Local, CPU-light still-image processing; no cloud camera upload.
+RUN (uv pip install --python /opt/hermes/.venv/bin/python Pillow==12.0.0 \
+     || /opt/hermes/.venv/bin/python -m pip install --no-cache-dir Pillow==12.0.0) \
+    && /opt/hermes/.venv/bin/python -c 'from PIL import Image; print("Gate Advisor Pillow ready")'
+
 ARG TARGETARCH
 RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch64|;s|amd64|x86_64|') \
     && curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${ARCH}" -o /usr/local/bin/ttyd \
@@ -31,6 +36,7 @@ COPY codex-provider-probe-v4.py /codex-provider-probe-v4.py
 COPY codex-model-discovery-v5.py /codex-model-discovery-v5.py
 COPY ha-telegram-bridge.py /ha-telegram-bridge.py
 COPY ha_home_capabilities.py /ha_home_capabilities.py
+COPY ha_gate_advisor.py /ha_gate_advisor.py
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh /addon-run.sh
 
