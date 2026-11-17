@@ -57,7 +57,7 @@ class GateDataset:
         self.enabled = (os.environ.get("HA_GATE_DATASET", "false").lower() == "true"
                         if enabled is None else bool(enabled))
         self.root = Path(root) if root is not None else ROOT
-        self.last_routine = 0.0
+        self.last_routine = None
         self.last_saved_utc = None
         self.errors = 0
         if self.enabled:
@@ -66,7 +66,7 @@ class GateDataset:
             self.prune()
 
     def due(self):
-        return self.enabled and time.monotonic() - self.last_routine >= INTERVAL
+        return self.enabled and (self.last_routine is None or time.monotonic() - self.last_routine >= INTERVAL)
 
     def entries(self):
         if not self.enabled:
