@@ -52,9 +52,9 @@ def _corr(a, b):
 
 def classify_jpeg(jpeg):
     """Conservative template POC; unknown on camera changes or weak evidence."""
-    from PIL import Image, ImageOps
     if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > 6000000:
         return "UNKNOWN", 0.0
+    from PIL import Image, ImageOps
     with Image.open(io.BytesIO(jpeg)) as image:
         width, height = image.size
         if not (640 <= width <= 5000 and 360 <= height <= 3000 and 1.72 < width/height < 1.84):
