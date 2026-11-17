@@ -173,13 +173,16 @@ class GateDataset:
 
     def stats(self):
         records = [row for _, row in self.entries()]
+        latest = max((row.get('timestamp', 0) for row in records), default=None)
+        last = (dt.datetime.fromtimestamp(latest, dt.timezone.utc).isoformat()
+                if latest is not None else None)
         return {
             "enabled": self.enabled,
             "samples": len(records),
             "open": sum(r["label"] == "OPEN" and r.get("verified") for r in records),
             "closed": sum(r["label"] == "CLOSED" and r.get("verified") for r in records),
             "unverified": sum(not r.get("verified") for r in records),
-            "last_sample_utc": self.last_saved_utc,
+            "last_sample_utc": last,
             "errors": self.errors,
         }
 
