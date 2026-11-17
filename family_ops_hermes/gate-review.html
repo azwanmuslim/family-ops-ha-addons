@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ms">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hermes Gate Sample Review</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0b1220;color:#eef2f9}
+*{box-sizing:border-box}body{margin:0;padding:16px}main{max-width:760px;margin:0 auto}
+h1{font-size:1.45rem;margin:.4rem 0}p{color:#aeb9c9;margin:.4rem 0 1rem;line-height:1.5}
+.panel{background:#152033;border:1px solid #33435a;border-radius:16px;padding:16px;margin:14px 0}
+.counts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{text-align:center;background:#202d41;padding:12px 4px;border-radius:10px}
+.stat strong{font-size:1.5rem;display:block}.stat small{font-size:.77rem;color:#b8c7db}
+img{width:100%;height:auto;max-height:530px;object-fit:contain;background:#050b14;border-radius:12px;border:1px solid #304257}
+.actions{display:flex;gap:10px;margin:14px 0}
+button{border:0;border-radius:11px;padding:13px 10px;color:white;font-size:1rem;font-weight:700;cursor:pointer;flex:1;min-height:48px}
+button:disabled{opacity:.35;cursor:wait}
+.open{background:#0e8954}.closed{background:#b65532}.skip{background:#485b70}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.muted{color:#afbdd0;font-size:.88rem}
+#info{color:#e6edf6;line-height:1.5}
+#message{min-height:1.4rem;font-weight:600;color:#a7edd9}
+a{color:#8bdbff}
+#photo[hidden],#controls[hidden]{display:none}
+.notice{background:#263448;border-left:3px solid #e1ac5b;padding:12px;border-radius:8px}
+@media(max-width:420px){body{padding:10px}.actions{gap:6px}button{font-size:.89rem}.panel{padding:12px}.counts{gap:5px}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>📷 Hermes Gate Sample Review</h1>
+    <p>Semak gambar yang sudah diambil. Pilihan OPEN/CLOSED mengesahkan <b>gambar itu sahaja</b>, bukan menggerakkan gate.</p>
+  </header>
+  <section class="panel">
+    <div class="counts" aria-label="Kemajuan review">
+      <div class="stat"><strong id="pending">–</strong><small>Belum disahkan</small></div>
+      <div class="stat"><strong id="openCount">–</strong><small>OPEN</small></div>
+      <div class="stat"><strong id="closedCount">–</strong><small>CLOSED</small></div>
+    </div>
+  </section>
+  <section class="panel">
+    <div class="top">
+      <strong id="position">Memuatkan gambar…</strong>
+      <button class="skip" style="max-width:112px;padding:8px" id="refresh" type="button">Refresh</button>
+    </div>
+    <p id="info" class="muted"></p>
+    <img id="photo" alt="Gambar kawasan pagar yang disimpan oleh Hermes" hidden>
+    <div class="actions" id="controls" hidden>
+      <button type="button" id="markOpen" class="open">✓ OPEN</button>
+      <button type="button" id="markClosed" class="closed">✓ CLOSED</button>
+      <button type="button" id="skip" class="skip">SKIP</button>
+    </div>
+    <div role="status" aria-live="polite" id="message"></div>
+    <p class="muted">Bila gambar gelap, kereta menghalang atau gate sedang bergerak, tekan SKIP. Jangan teka.</p>
+  </section>
+  <section class="panel">
+    <div class="notice">Gambar crop lama yang tidak menunjukkan gate tidak digunakan untuk belajar. <strong id="legacy">0</strong> sampel lama diasingkan.</div>
+    <p class="muted" style="margin-top:12px">Capture baharu setiap 30 minit. Simpan maksimum 14 hari. Tiada kawalan motor pagar atau penghantaran gambar ke cloud.</p>
+    <p><a href="../">Kembali ke Hermes</a></p>
+  </section>
+</main>
+<script nonce="__CSP_NONCE__">
+"use strict";
+const el=id=>document.getElementById(id);
+const photo=el("photo");
+let items=[], index=0, csrf="", busy=false;
+function setBusy(on){
+ busy=on;
+ for(const id of ["markOpen","markClosed","skip","refresh"])el(id).disabled=on;
+}
+function show(){
+ const active=items[index];
+ const has=!!active;
+ el("controls").hidden=!has;
+ photo.hidden=!has;
+ if(!has){
+  photo.removeAttribute("src");
+  el("position").textContent="Tiada lagi gambar untuk disahkan 🎉";
+  el("info").textContent="Hermes akan tambah gambar selepas capture seterusnya.";
+  return;
+ }
+ el("position").textContent="Gambar "+(index+1)+" / "+items.length;
+ const when=new Date(active.timestamp*1000);
+ el("info").textContent=when.toLocaleString("ms-MY",{timeZone:"Asia/Kuala_Lumpur",
+   year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})+
+   " (Malaysia) · "+(active.sun==="above_horizon"?"Siang":"Malam/gelap");
+ photo.src="api/photo/"+encodeURIComponent(active.id);
+}
+async function reload(){
+ if(busy)return;
+ setBusy(true);
+ el("message").textContent="";
+ try{
+  const r=await fetch("api/list",{credentials:"same-origin",cache:"no-store"});
+  if(!r.ok)throw Error("Gagal dapatkan senarai gambar");
+  const j=await r.json();
+  csrf=j.csrf;
+  items=j.samples||[];
+  index=0;
+  el("pending").textContent=j.counts.pending;
+  el("openCount").textContent=j.counts.open;
+  el("closedCount").textContent=j.counts.closed;
+  el("legacy").textContent=j.counts.legacy;
+  if(!j.enabled)throw Error("Gate dataset belum diaktifkan");
+  show();
+ }catch(err){el("message").textContent=err.message}
+ finally{setBusy(false)}
+}
+async function submit(label){
+ if(busy||!items[index])return;
+ setBusy(true);
+ el("message").textContent="Menyimpan label…";
+ try{
+  const sid=items[index].id;
+  const r=await fetch("api/label",{
+   method:"POST",credentials:"same-origin",
+   headers:{"Content-Type":"application/json","X-Gate-Review-CSRF":csrf},
+   body:JSON.stringify({id:sid,label})
+  });
+  if(!r.ok)throw Error("Gagal simpan label ("+r.status+"). Cuba Refresh.");
+  items.splice(index,1);
+  if(index>=items.length)index=0;
+  el(label==="OPEN"?"openCount":"closedCount").textContent=
+    Number(el(label==="OPEN"?"openCount":"closedCount").textContent)+1;
+  el("pending").textContent=Math.max(0,Number(el("pending").textContent)-1);
+  show();
+  el("message").textContent="✅ "+label+" disimpan untuk gambar tersebut.";
+ }catch(err){el("message").textContent=err.message}
+ finally{setBusy(false)}
+}
+el("markOpen").addEventListener("click",()=>submit("OPEN"));
+el("markClosed").addEventListener("click",()=>submit("CLOSED"));
+el("skip").addEventListener("click",()=>{
+ if(!items.length)return;
+ index=(index+1)%items.length;show();el("message").textContent="Gambar dilangkau, belum dilabel.";
+});
+el("refresh").addEventListener("click",reload);
+photo.addEventListener("error",()=>{el("message").textContent="Gagal paparkan gambar. Cuba Refresh."});
+reload();
+</script>
+</body>
+</html>

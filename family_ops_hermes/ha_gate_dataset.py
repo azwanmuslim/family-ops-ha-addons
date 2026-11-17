@@ -11,6 +11,7 @@ import json
 import math
 import os
 import secrets
+import re
 import time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ MAX_BYTES = 80 * 1024 * 1024
 MAX_FILES = 800
 # Provisional camera-relative gate/driveway entrance region. Recalibrate using
 # verified owner frames before considering vision safe for automatic actions.
-ROI = (0.30, 0.72, 0.74, 0.995)
+ROI = (0.54, 0.99, 0.19, 0.67)
 
 
 def feature(image):
@@ -172,13 +173,15 @@ class GateDataset:
             return "Gagal simpan gambar. Tiada perubahan pada gate."
 
     def stats(self):
-        records = [row for _, row in self.entries()]
+        all_records = [row for _, row in self.entries()]
+        records = [row for row in all_records if row.get("roi") == list(ROI)]
         latest = max((row.get('timestamp', 0) for row in records), default=None)
         last = (dt.datetime.fromtimestamp(latest, dt.timezone.utc).isoformat()
                 if latest is not None else None)
         return {
             "enabled": self.enabled,
             "samples": len(records),
+            "legacy_samples": len(all_records) - len(records),
             "open": sum(r["label"] == "OPEN" and r.get("verified") for r in records),
             "closed": sum(r["label"] == "CLOSED" and r.get("verified") for r in records),
             "unverified": sum(not r.get("verified") for r in records),
@@ -197,11 +200,90 @@ class GateDataset:
                 f"Label keadaan sebenar: /gatelearn OPEN atau /gatelearn CLOSED\n"
                 "Data tidak dieksport. Tiada arahan motor pagar.")
 
+    @staticmethod
+    def _valid_sample_id(sample_id):
+        return isinstance(sample_id, str) and bool(
+            re.fullmatch(r"[0-9]{8}T[0-9]{6}-[a-f0-9]{8}", sample_id)
+        )
+
+    def review_queue(self, limit=100):
+        """Only NEW ROI images, not already labelled or obsolete training crops."""
+        if not self.enabled:
+            return []
+        todo = [
+            {
+                "id": row["id"],
+                "timestamp": float(row["timestamp"]),
+                "sun": str(row.get("sun", "unknown"))[:24],
+            }
+            for _, row in self.entries()
+            if row.get("roi") == list(ROI)
+            and row["label"] == "UNKNOWN"
+            and not row.get("verified", False)
+        ]
+        todo.sort(key=lambda r: r["timestamp"], reverse=True)
+        return todo[:max(1, min(int(limit), 120))]
+
+    def review_photo(self, sample_id):
+        """Return only the existing CROPPED image for current-ROI review."""
+        if not self.enabled or not self._valid_sample_id(sample_id):
+            raise ValueError("invalid_sample")
+        meta = self.root / (sample_id + ".json")
+        photo = self.root / (sample_id + ".jpg")
+        try:
+            row = json.loads(meta.read_text(encoding="utf-8"))
+            if (row.get("id") != sample_id or row.get("roi") != list(ROI)
+                    or row.get("label") != "UNKNOWN"
+                    or row.get("verified") or not photo.is_file()):
+                raise ValueError("sample_not_reviewable")
+            data = photo.read_bytes()
+            if not data.startswith(b"\xff\xd8") or len(data) > 1_500_000:
+                raise ValueError("bad_photo")
+            return data
+        except FileNotFoundError as exc:
+            raise ValueError("sample_expired") from exc
+
+    def confirm_existing(self, sample_id, label):
+        """Atomically label exactly one saved image; no camera snapshot or gate call."""
+        if not self.enabled or not self._valid_sample_id(sample_id):
+            raise ValueError("invalid_sample")
+        if label not in ("OPEN", "CLOSED"):
+            raise ValueError("invalid_label")
+        meta = self.root / (sample_id + ".json")
+        photo = self.root / (sample_id + ".jpg")
+        try:
+            row = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("sample_not_found") from exc
+        if (row.get("id") != sample_id or row.get("roi") != list(ROI)
+                or row.get("label") != "UNKNOWN" or row.get("verified")
+                or not photo.is_file()):
+            raise ValueError("sample_already_reviewed_or_old_crop")
+        if float(row.get("timestamp", 0)) < time.time() - RETENTION:
+            raise ValueError("sample_expired")
+        row.update({
+            "label": label,
+            "verified": True,
+            "source": "owner_review",
+            "verified_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        })
+        temporary = self.root / ("." + sample_id + "-" + secrets.token_hex(4) + ".tmp")
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(row, handle, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, meta)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return True
+
     def classify(self, jpeg):
         """Very conservative optional nearest-reference learning; never auto-label."""
         if not self.enabled:
             return "UNKNOWN", 0.0
-        rows = [row for _, row in self.entries() if row.get("verified")
+        rows = [row for _, row in self.entries() if row.get("roi") == list(ROI) and row.get("verified")
                 and row["label"] in ("OPEN", "CLOSED")
                 and isinstance(row.get("vector"), list) and len(row["vector"]) == 256]
         classes = {k: [row["vector"] for row in rows if row["label"] == k][-36:]
