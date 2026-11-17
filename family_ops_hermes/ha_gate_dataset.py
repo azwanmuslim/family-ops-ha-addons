@@ -89,7 +89,7 @@ class GateDataset:
         records = self.entries()
         now = time.time()
         size = sum((self.root / (p.stem + ".jpg")).stat().st_size for p, _ in records)
-        for meta, row in records:
+        for meta, row in list(records):
             photo = self.root / (meta.stem + ".jpg")
             try:
                 old = float(row.get("timestamp", 0)) < now - RETENTION
