@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import time
 import zlib
+from ha_gate_dataset import GateDataset
 
 API = "http://supervisor/core/api"
 HEADERS = {"Authorization": "Bearer " + os.environ.get("SUPERVISOR_TOKEN", "")}
@@ -93,6 +94,7 @@ class GateAdvisor:
         self.sent_today = 0
         self.latest = "UNKNOWN"
         self.enabled = os.environ.get("HA_GATE_ADVISOR", "false").lower() == "true"
+        self.dataset = GateDataset()
 
     def _save(self, **fields):
         safe = {
@@ -119,12 +121,22 @@ class GateAdvisor:
         if cam.get("state") in ("unknown","unavailable",None):
             return "UNKNOWN",0.0
         sun=states.get("sun.sun",{})
-        if sun.get("state") != "above_horizon":
+        sunlight = sun.get("state") == "above_horizon"
+        # Night frames are saved every 30 min, but night classification stays UNKNOWN.
+        if not sunlight and not self.dataset.due():
             return "UNKNOWN",0.0
         async with session.get(API+"/camera_proxy/"+CAMERA,headers=HEADERS,timeout=23) as r:
             if r.status != 200: return "UNKNOWN",0.0
             image=await r.read()
             if len(image)>6000000: return "UNKNOWN",0.0
+        if self.dataset.due():
+            if self.dataset.capture_routine(image, sun.get("state", "unknown")):
+                print("HERMES_GATE_DATASET: sample_saved=true", flush=True)
+        if not sunlight:
+            return "UNKNOWN",0.0
+        learned, margin = self.dataset.classify(image)
+        if learned in ("OPEN", "CLOSED"):
+            return learned, margin
         return classify_jpeg(image)
 
     @staticmethod

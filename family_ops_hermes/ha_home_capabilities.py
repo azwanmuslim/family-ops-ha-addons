@@ -124,11 +124,12 @@ class HomeTools:
         visual = ("📷 Visual gate (POC): " + advisor.latest + "\n"
                   if advisor is not None else "📷 Visual gate: belum tersedia\n")
         gates = self.gate_items(states)
+        learning = ("\n" + advisor.dataset.summary()) if advisor is not None else ""
         if not gates:
-            return visual + "Tiada sensor fizikal open/closed disahkan. Switch.bothgate ialah pulse, BUKAN sensor gate. Cadangan sahaja."
+            return visual + "Tiada sensor fizikal open/closed disahkan. Switch.bothgate ialah pulse, BUKAN sensor gate. Cadangan sahaja." + learning
         return (visual + "🚧 Sensor gate:\n" + "\n".join(
             f"• {self.friendly(row)}: {self.state(row)}" for _,row in gates[:8]
-        ) + "\nSemakan sahaja; tiada arahan buka/tutup dihantar.")
+        ) + "\nSemakan sahaja; tiada arahan buka/tutup dihantar." + learning)
 
     def light_summary(self, states):
         # Real household lights are commonly switch.*, not light.*.
@@ -283,6 +284,20 @@ class HomeTools:
         text = str(prompt).strip()
         lower=text.lower()
         if not text: return "/ai <soalan> untuk bersembang dengan Hermes."
+        if lower == "/gatedata":
+            advisor = getattr(self, "gate_advisor", None)
+            return advisor.dataset.summary() if advisor else "Gate learning belum tersedia."
+        if lower.startswith("/gatelearn"):
+            advisor = getattr(self, "gate_advisor", None)
+            if advisor is None:
+                return "Gate learning belum tersedia."
+            parts = lower.split()
+            if len(parts) != 2 or parts[1] not in ("open", "closed"):
+                return "Guna /gatelearn OPEN atau /gatelearn CLOSED ketika status gate disahkan secara visual."
+            # An owner-initiated fresh camera capture; never toggles the gate.
+            self.pending = None
+            self.pending_selection = None
+            return await advisor.dataset.owner_confirm(session, parts[1].upper(), API, HEADERS)
         # A numbered reply selects a candidate, but NEVER performs the action.
         # A second explicit positive acknowledgement is still required.
         selection = self.pending_selection
@@ -386,7 +401,7 @@ class HomeTools:
             return "Arahan kawalan dibatalkan."
         if lower in ("/hahelp","/homehelp","/rumahhelp"):
             return ("Hermes rumah:\n/rumah — ringkasan\n/ram — prestasi RPi4\n/cctv — status entity kamera\n"
-                    "/gate — sensor pagar\n/lampu — light/fan\n"
+                    "/gate — sensor pagar\n/gatedata — sampel\n/gatelearn OPEN/CLOSED — sahkan gambar semasa\n/lampu — light/fan\n"
                     "Hidupkan lampu ruang tamu → pilih lampu tepat → balas ok/yes/confirm.\n"
                     "Gate/kunci/alarm tidak dikawal melalui AI.")
         # Prevent a model from construing unsafe device-control language as authorization.

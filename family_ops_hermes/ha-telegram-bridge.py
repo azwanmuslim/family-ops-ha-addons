@@ -60,7 +60,7 @@ def eligible(event_name, data):
         command = str(data.get("command") or "").split("@", 1)[0].lower()
         allowed = {
             "/ai", "/hermes", "/rumah", "/home", "/statusrumah",
-            "/ram", "/cpu", "/prestasi", "/cctv", "/camera", "/gate", "/pagar",
+            "/ram", "/cpu", "/prestasi", "/cctv", "/camera", "/gate", "/pagar", "/gatedata", "/gatelearn",
             "/lampu", "/lights", "/peranti", "/hahelp", "/homehelp", "/rumahhelp",
             "/confirm", "/sahkan", "/cancel", "/batal",
             "/entities", "/devices", "/entity", "/entiti"
