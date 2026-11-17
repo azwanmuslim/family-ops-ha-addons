@@ -4,8 +4,13 @@ set -euo pipefail
 NGINX_PID=""
 TTYD_PID=""
 TG_BRIDGE_PID=""
+GATE_REVIEW_PID=""
 
 shutdown() {
+  if [ -n "${GATE_REVIEW_PID}" ] && kill -0 "${GATE_REVIEW_PID}" >/dev/null 2>&1; then
+    kill -TERM "${GATE_REVIEW_PID}" >/dev/null 2>&1 || true
+    wait "${GATE_REVIEW_PID}" 2>/dev/null || true
+  fi
   if [ -n "${TG_BRIDGE_PID}" ] && kill -0 "${TG_BRIDGE_PID}" >/dev/null 2>&1; then
     kill -TERM "${TG_BRIDGE_PID}" >/dev/null 2>&1 || true
     wait "${TG_BRIDGE_PID}" 2>/dev/null || true
@@ -77,6 +82,12 @@ if [ "${HA_TELEGRAM_BRIDGE:-false}" = "true" ]; then
   echo "Starting owner-only HA Telegram event bridge"
   /opt/hermes/.venv/bin/python -u /ha-telegram-bridge.py &
   TG_BRIDGE_PID=$!
+fi
+
+if [ "${HA_GATE_DATASET:-false}" = "true" ]; then
+  echo "Starting private local gate image review server"
+  /opt/hermes/.venv/bin/python -u /ha_gate_review.py &
+  GATE_REVIEW_PID=$!
 fi
 
 echo "Starting ingress nginx on port 9119"
