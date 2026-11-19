@@ -69,3 +69,19 @@ All live reads use the existing Home Assistant API credentials inside the add-on
 - The new cropped picture appears immediately at the front of the review queue. Confirm **OPEN** or **CLOSED** only after inspecting that actual image. If the gate is moving, obstructed or too dark, use **SKIP**; an unverified photo never becomes training truth.
 - Capture requires the authenticated HA ingress and an anti-CSRF token, limits repeats to once per three seconds, and never invokes `switch.bothgate`, motor or Home Assistant control services. Raw image data stays in the add-on; 14-day local retention remains unchanged. Routine 30-minute snapshots continue unaffected.
 - After merging this version, refresh the HA add-on store and **update/restart Hermes** to load the new button and backend; GitHub source changes alone do not update a running add-on.
+
+## GPS approach evidence and false-positive suppression (v44)
+
+- A gate-closed suggestion now requires **three distinct, recent GPS fixes** from
+  the same family member. Identical HA update timestamps are never re-counted.
+- Reject missing accuracy or GPS uncertainty above **50 m**; fixes must be at
+  most **5 minutes old**. Two successive decreases must each be at least
+  **60 m**, with at least **150 m total reduction**, over 2-15 minutes.
+  The final position must be approximately 120-800 m from Home.
+- `NEAR_HOME`, `STATIONARY`, and `APPROACHING` are kept as local
+  diagnostic classifications. Near home alone does **not** send an alert.
+- The owner's Telegram suggestion includes estimated straight-line distances,
+  elapsed time, and GPS accuracy. Raw coordinates are not exported or logged.
+- This remains a suggestion-only POC: no gate service, pulse, or automation
+  is permitted. After merging, update/restart the Hermes HA add-on to v44;
+  a GitHub commit does not change an already running add-on.
