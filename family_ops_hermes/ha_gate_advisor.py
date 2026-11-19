@@ -89,7 +89,8 @@ class GateAdvisor:
     def __init__(self, owner_send):
         self.owner_send = owner_send
         self.visual_history = []
-        self.gps_history = {}
+        self.gps_history = {}  # Per-person, last three accurate GPS observations (no coordinates)
+        self.gps_trend = "UNKNOWN"
         self.last_alert = {}
         self.day = ""
         self.sent_today = 0
@@ -224,47 +225,109 @@ class GateAdvisor:
         # Fail closed: unknown person or group makes empty-home suggestion invalid.
         return group=="not_home" and all(r.get("state") not in ("home","unknown","unavailable",None) for r in members)
 
-    def _approaching(self,states,now):
-        home=(states.get("zone.home",{}).get("attributes") or {})
-        hl,hn=_number(home.get("latitude")),_number(home.get("longitude"))
-        if hl is None or hn is None: return None
-        winner=None
-        for pid,p in states.items():
-            if not pid.startswith("person.") or p.get("state") in ("home","unknown","unavailable",None):
+    def _approaching(self, states, now):
+        """Only three distinct, recent, accurate GPS fixes can imply approach.
+
+        Keep short-lived per-person distances, not raw coordinates. A nearby
+        location alone (or a repeat of an unchanged HA timestamp) is not motion.
+        """
+        self.gps_trend = "UNKNOWN"
+        home = (states.get("zone.home", {}).get("attributes") or {})
+        hl, hn = _number(home.get("latitude")), _number(home.get("longitude"))
+        if hl is None or hn is None:
+            self.gps_history.clear()
+            return None
+
+        for pid, person in states.items():
+            if not pid.startswith("person."):
                 continue
-            attrs=p.get("attributes") or {}
-            source=attrs.get("source")
-            gps=states.get(source,{}) if isinstance(source,str) and source.startswith("device_tracker.") else {}
-            gpsattrs=gps.get("attributes") or {}
-            lat,lon=_number(attrs.get("latitude")),_number(attrs.get("longitude"))
-            accuracy=_number(attrs.get("gps_accuracy"))
-            if lat is None or lon is None:
-                lat,lon=_number(gpsattrs.get("latitude")),_number(gpsattrs.get("longitude"))
-                accuracy=_number(gpsattrs.get("gps_accuracy"))
-            if lat is None or lon is None or (accuracy is not None and accuracy>150):
+            if person.get("state") in ("home", "unknown", "unavailable", None):
+                self.gps_history.pop(pid, None)
                 continue
-            updated=gps.get("last_updated") if gps else p.get("last_updated")
+
+            attrs = person.get("attributes") or {}
+            source = attrs.get("source")
+            tracker = (states.get(source, {}) if isinstance(source, str)
+                       and source.startswith("device_tracker.") else {})
+            gpsattrs = tracker.get("attributes") or {}
+            # Match coordinates, accuracy and timestamp to the same source.
+            tracker_lat = _number(gpsattrs.get("latitude"))
+            tracker_lon = _number(gpsattrs.get("longitude"))
+            if tracker_lat is not None and tracker_lon is not None:
+                lat, lon = tracker_lat, tracker_lon
+                accuracy = _number(gpsattrs.get("gps_accuracy"))
+                updated = tracker.get("last_updated")
+            else:
+                lat = _number(attrs.get("latitude"))
+                lon = _number(attrs.get("longitude"))
+                accuracy = _number(attrs.get("gps_accuracy"))
+                updated = person.get("last_updated")
+
+            # Missing/poor accuracy is not evidence of movement.
+            if (lat is None or lon is None or accuracy is None
+                    or not 0 <= accuracy <= 50):
+                self.gps_history.pop(pid, None)
+                continue
             try:
-                last=dt.datetime.fromisoformat(str(updated).replace("Z","+00:00"))
-                age=(dt.datetime.now(dt.timezone.utc)-last).total_seconds()
-                if age< -90 or age>600: continue
-            except (ValueError,TypeError):
+                fix_time = dt.datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+                if fix_time.tzinfo is None:
+                    raise ValueError("gps_timestamp_without_timezone")
+                age = (dt.datetime.now(dt.timezone.utc) - fix_time).total_seconds()
+                if not -60 <= age <= 300:
+                    self.gps_history.pop(pid, None)
+                    continue
+            except (ValueError, TypeError):
+                self.gps_history.pop(pid, None)
                 continue
-            dist=_distance_m(lat,lon,hl,hn)
-            if dist > 5000:  # don't retain distant locations
-                self.gps_history.pop(pid,None)
+
+            distance = _distance_m(lat, lon, hl, hn)
+            if distance > 5000:
+                self.gps_history.pop(pid, None)
                 continue
-            previous=self.gps_history.get(pid)
-            self.gps_history[pid]=(now,dist)
-            if not previous: continue
-            dt_sec=now-previous[0]
-            moved=previous[1]-dist
-            if 60<=dt_sec<=900 and 120<=dist<=800 and 80<=moved<=3000:
-                # No names or exact coordinates in GitHub/logs; only owner's
-                # Telegram sees this short name.
-                winner=str((p.get("attributes") or {}).get("friendly_name") or "Ahli keluarga")[:50]
-                break
-        return winner
+            history = self.gps_history.get(pid, [])
+            if history and fix_time <= history[-1]["updated"]:
+                # An unchanged source timestamp is NOT another GPS sample.
+                if distance <= 800 and self.gps_trend == "UNKNOWN":
+                    self.gps_trend = "NEAR_HOME"
+                continue
+            if history and (fix_time - history[-1]["updated"]).total_seconds() > 600:
+                history = []
+            history = (history + [{"updated": fix_time, "distance": distance,
+                                  "accuracy": accuracy}])[-3:]
+            self.gps_history[pid] = history
+            if distance <= 800 and self.gps_trend == "UNKNOWN":
+                self.gps_trend = "NEAR_HOME"
+            if len(history) < 3:
+                continue
+
+            first, middle, latest = history
+            elapsed = (latest["updated"] - first["updated"]).total_seconds()
+            gaps = [(middle["updated"] - first["updated"]).total_seconds(),
+                    (latest["updated"] - middle["updated"]).total_seconds()]
+            decreases = [first["distance"] - middle["distance"],
+                         middle["distance"] - latest["distance"]]
+            # Three stable nearby fixes should never become 'approaching'.
+            if (distance <= 800 and
+                    max(s["distance"] for s in history) -
+                    min(s["distance"] for s in history) <= 60):
+                self.gps_trend = "STATIONARY"
+                continue
+            if not (120 <= distance <= 800 and 120 <= elapsed <= 900
+                    and all(45 <= gap <= 600 for gap in gaps)
+                    and all(step >= 60 for step in decreases)
+                    and sum(decreases) >= 150):
+                continue
+
+            self.gps_trend = "APPROACHING"
+            return {
+                "name": str(attrs.get("friendly_name") or "Ahli keluarga")[:50],
+                "from_m": round(first["distance"] / 10) * 10,
+                "to_m": round(distance / 10) * 10,
+                "minutes": round(elapsed / 60, 1),
+                "accuracy_m": round(accuracy),
+                "samples": 3,
+            }
+        return None
 
     async def check_once(self,session):
         now=time.monotonic()
@@ -291,7 +354,7 @@ class GateAdvisor:
         away=self._presence(states)
         arriving=self._approaching(states,now)
         self._save(stable=stable,confidence_margin=confidence,people_all_away=away,
-                   gps_approaching=bool(arriving))
+                   gps_approaching=bool(arriving), gps_trend=self.gps_trend)
         with contextlib.suppress(Exception):
             await self.publish_dashboard(session, confidence)
         if not self.enabled or not stable or self.sent_today>=4:
@@ -306,10 +369,13 @@ class GateAdvisor:
                      "Tiada arahan gate dihantar.")
         elif current=="CLOSED" and arriving:
             key="closed_on_approach"
-            message=(f"🤖 Hermes Gate Advisor (POC)\n{arriving} dikesan menghampiri rumah "
-                     "berdasarkan beberapa bacaan GPS, dan CCTV nampak gate TERTUTUP. "
-                     "Cadangan: pertimbangkan buka gate apabila sesuai.\n"
-                     "Tiada arahan gate dihantar.")
+            message=(f"🤖 Hermes Gate Advisor (POC)\\n"
+                     f"{arriving['name']} dikesan menghampiri rumah (3 bacaan GPS baharu).\\n"
+                     f"Jarak GPS anggaran: {arriving['from_m']}m → {arriving['to_m']}m "
+                     f"dalam {arriving['minutes']} minit; ketepatan terkini "
+                     f"±{arriving['accuracy_m']}m. Ini jarak garis lurus, bukan laluan jalan.\\n"
+                     "CCTV nampak gate TERTUTUP. Cadangan: pertimbangkan buka gate "
+                     "apabila sesuai.\\nTiada arahan gate dihantar.")
         if not key: return
         if now-self.last_alert.get(key, -1e12)<3600: return
         try:
