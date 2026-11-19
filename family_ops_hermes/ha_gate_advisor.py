@@ -369,13 +369,13 @@ class GateAdvisor:
                      "Tiada arahan gate dihantar.")
         elif current=="CLOSED" and arriving:
             key="closed_on_approach"
-            message=(f"🤖 Hermes Gate Advisor (POC)\\n"
-                     f"{arriving['name']} dikesan menghampiri rumah (3 bacaan GPS baharu).\\n"
+            message=(f"🤖 Hermes Gate Advisor (POC)\n"
+                     f"{arriving['name']} dikesan menghampiri rumah (3 bacaan GPS baharu).\n"
                      f"Jarak GPS anggaran: {arriving['from_m']}m → {arriving['to_m']}m "
                      f"dalam {arriving['minutes']} minit; ketepatan terkini "
-                     f"±{arriving['accuracy_m']}m. Ini jarak garis lurus, bukan laluan jalan.\\n"
+                     f"±{arriving['accuracy_m']}m. Ini jarak garis lurus, bukan laluan jalan.\n"
                      "CCTV nampak gate TERTUTUP. Cadangan: pertimbangkan buka gate "
-                     "apabila sesuai.\\nTiada arahan gate dihantar.")
+                     "apabila sesuai.\nTiada arahan gate dihantar.")
         if not key: return
         if now-self.last_alert.get(key, -1e12)<3600: return
         try:
