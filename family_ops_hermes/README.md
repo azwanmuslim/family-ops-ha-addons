@@ -85,3 +85,14 @@ All live reads use the existing Home Assistant API credentials inside the add-on
 - This remains a suggestion-only POC: no gate service, pulse, or automation
   is permitted. After merging, update/restart the Hermes HA add-on to v44;
   a GitHub commit does not change an already running add-on.
+
+
+## Gate Vision local validation and diagnostic (v45)
+
+- The Learning percentage measures labelled coverage, **not model accuracy**.
+- Use a class-balanced, newest-25%-held-out local evaluation from owner-confirmed OPEN and CLOSED images (at most 36/class); validation frames are never used as model references.
+- Evaluate both original entrance crop and a focused upper-gate-band candidate reconstructed **locally from existing retained labelled crops**; choose a model only after at least 90% overall and 80% per-class validation at conservative similarity/margin thresholds.
+- Model status is COLLECTING, EVALUATION_FAILED, or READY_POC. READY_POC is *not* field-tested safety certification and does not enable gate actuation. Poor frames remain UNKNOWN.
+- Publish sanitized evaluation accuracy and UNKNOWN reasons to Home Assistant sensors, with model selection, without uploading raw images, vectors, coordinates or device secrets.
+- When the labelled local dataset is enabled, do not bypass failed evaluation with the old two-reference template. Night remains UNKNOWN.
+- The 14-day photo retention, review queue, snapshot-now and suggestions-only motor restriction are unchanged.
