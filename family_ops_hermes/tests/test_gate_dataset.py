@@ -109,6 +109,50 @@ class DatasetTests(unittest.TestCase):
         b = [1]*128 + [200]*128
         self.assertGreater(similarity(a, b), 0.99)
 
+    def test_holdout_is_not_sample_percentage(self):
+        # Identical contradictory labels must FAIL, despite 100% labelled images.
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            for _ in range(8):
+                store.save(jpeg(), label="OPEN", source="owner_confirmed")
+                store.save(jpeg(), label="CLOSED", source="owner_confirmed")
+            report = store.evaluate()
+            self.assertEqual(report["status"], "EVALUATION_FAILED")
+            self.assertLess(report["accuracy_pct"], 90)
+            self.assertEqual(store.classify(jpeg())[0], "UNKNOWN")
+            self.assertEqual(store.classify_diagnostic(jpeg())[2]["reason"],
+                             "HOLDOUT_ACCURACY_LOW")
+
+    def test_balanced_holdout_and_legacy_crop_reuse(self):
+        from PIL import Image, ImageDraw
+        def frame(open_state):
+            image = Image.new("RGB", (640, 360), (185, 200, 210))
+            draw = ImageDraw.Draw(image)
+            # High-contrast gate shape in upper crop band; different by class.
+            if open_state:
+                for x in range(120, 520, 32):
+                    draw.rectangle((x, 130, x+7, 193), fill=(25, 25, 25))
+            else:
+                for y in range(135, 195, 12):
+                    draw.rectangle((110, y, 548, y+6), fill=(25, 25, 25))
+            out = io.BytesIO()
+            image.save(out, "JPEG", quality=92)
+            return out.getvalue()
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            opened = frame(True)
+            closed = frame(False)
+            for _ in range(8):
+                store.save(opened, label="OPEN", source="owner_confirmed")
+                store.save(closed, label="CLOSED", source="owner_confirmed")
+            report = store.evaluate()
+            self.assertEqual(report["status"], "READY_POC")
+            self.assertEqual(report["accuracy_pct"], 100.0)
+            self.assertGreaterEqual(report["open_evaluated"], 2)
+            self.assertEqual(store.classify(opened)[0], "OPEN")
+            self.assertEqual(store.classify(closed)[0], "CLOSED")
+            self.assertEqual(store.stats()["samples"], 16)
+
     def test_no_actuation_or_external_export(self):
         import inspect
         source = inspect.getsource(GateDataset)

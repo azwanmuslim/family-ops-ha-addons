@@ -64,6 +64,8 @@ class GateDataset:
         self.last_routine = None
         self.last_saved_utc = None
         self.errors = 0
+        self._focused_cache = {}
+        self._evaluation_cache = None
         if self.enabled:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             self.root.chmod(0o700)
@@ -282,39 +284,147 @@ class GateDataset:
             temporary.unlink(missing_ok=True)
         return True
 
-    def classify(self, jpeg):
-        """Very conservative optional nearest-reference learning; never auto-label."""
+    def _focused_vector(self, crop_jpeg):
+        """Upper gate band from the existing stored ROI crop; exclude parked car below.
+
+        Old owner-confirmed photos remain usable; do NOT relabel or mutate them.
+        """
+        from PIL import Image
+        with Image.open(io.BytesIO(crop_jpeg)) as image:
+            gray = image.convert("L")
+            gate = gray.crop((0, 0, gray.width, max(1, round(gray.height * 0.58))))
+            return list(gate.resize((16, 16), Image.Resampling.BILINEAR).tobytes())
+
+    @staticmethod
+    def _score(vector, train):
+        return {label: max((similarity(vector, ref) for ref in refs), default=0.0)
+                for label, refs in train.items()}
+
+    def evaluate(self):
+        """Time-ordered, class-balanced held-out self-check; never a safety certificate.
+
+        Use the newest 25% of each class as validation only, never references.
+        This limits repeated CLOSED frames from dominating a smaller OPEN class.
+        """
         if not self.enabled:
-            return "UNKNOWN", 0.0
-        rows = [row for _, row in self.entries() if row.get("roi") == list(ROI) and row.get("verified")
-                and row["label"] in ("OPEN", "CLOSED")
-                and isinstance(row.get("vector"), list) and len(row["vector"]) == 256]
-        classes = {k: [row["vector"] for row in rows if row["label"] == k][-36:]
-                   for k in ("OPEN", "CLOSED")}
+            return {"status": "DISABLED", "reason": "DATASET_DISABLED",
+                    "accuracy_pct": None, "model": "none", "evaluated": 0}
+        rows = [row for _, row in self.entries()
+                if row.get("roi") == list(ROI) and row.get("verified")
+                and row.get("label") in ("OPEN", "CLOSED")
+                and isinstance(row.get("vector"), list)
+                and len(row["vector"]) == 256]
+        classes = {label: [r for r in rows if r["label"] == label][-36:]
+                   for label in ("OPEN", "CLOSED")}
         if min(map(len, classes.values())) < 6:
-            return "UNKNOWN", 0.0
-        # Lightweight leave-one-out self-check. Do not trust an unvalidated model.
-        correct, total = 0, 0
-        for label in classes:
-            for idx, test in enumerate(classes[label]):
-                if idx % 4 != 0:
-                    continue
-                train = {k: (vectors[:idx] + vectors[idx+1:] if k == label else vectors)
-                         for k, vectors in classes.items()}
-                scores = {k: max(similarity(test, v) for v in vectors)
-                          for k, vectors in train.items()}
-                correct += int(max(scores, key=scores.get) == label)
-                total += 1
-        if total < 4 or correct / total < .90:
-            return "UNKNOWN", 0.0
+            return {"status": "COLLECTING", "reason": "INSUFFICIENT_VERIFIED_SAMPLES",
+                    "accuracy_pct": None, "model": "none", "evaluated": 0}
+        # Equal-sized recent classes, so abundant CLOSED images cannot skew accuracy.
+        n = min(map(len, classes.values()))
+        selected = {k: v[-n:] for k, v in classes.items()}
+        key = tuple((r["id"], r["label"]) for label in ("OPEN", "CLOSED")
+                    for r in selected[label])
+        if self._evaluation_cache is not None and self._evaluation_cache["key"] == key:
+            return dict(self._evaluation_cache["report"])
+        holdout = max(2, (n + 3) // 4)
+        split = {k: (v[:-holdout], v[-holdout:]) for k, v in selected.items()}
+        candidates = {"full_roi": {}, "gate_band": {}}
+        for label in ("OPEN", "CLOSED"):
+            for row in selected[label]:
+                sid = row["id"]
+                if sid not in self._focused_cache:
+                    try:
+                        self._focused_cache[sid] = self._focused_vector(
+                            (self.root / (sid + ".jpg")).read_bytes())
+                    except (OSError, ValueError):
+                        self._focused_cache[sid] = None
+                candidates["full_roi"][sid] = row["vector"]
+                candidates["gate_band"][sid] = self._focused_cache[sid]
+        results = []
+        for model, vectors in candidates.items():
+            train = {label: [vectors[r["id"]] for r in split[label][0]
+                             if vectors[r["id"]] is not None]
+                     for label in ("OPEN", "CLOSED")}
+            if min(map(len, train.values())) < 4:
+                continue
+            correct = {"OPEN": 0, "CLOSED": 0}
+            checked = {"OPEN": 0, "CLOSED": 0}
+            for label in ("OPEN", "CLOSED"):
+                for row in split[label][1]:
+                    vector = vectors[row["id"]]
+                    if vector is None:
+                        continue
+                    scores = self._score(vector, train)
+                    other = "CLOSED" if label == "OPEN" else "OPEN"
+                    predicted = max(scores, key=scores.get)
+                    checked[label] += 1
+                    if (predicted == label and scores[label] >= 0.93
+                            and scores[label] - scores[other] >= 0.12):
+                        correct[label] += 1
+            total = sum(checked.values())
+            if not total or min(checked.values()) < 2:
+                continue
+            acc = sum(correct.values()) / total
+            class_min = min(correct[k] / checked[k] for k in checked)
+            results.append((acc, class_min, model, train, checked))
+        if not results:
+            report = {"status": "EVALUATION_FAILED", "reason": "NO_VALID_HOLDOUT",
+                      "accuracy_pct": 0.0, "model": "none", "evaluated": 0}
+            self._evaluation_cache = {"key": key, "report": report, "train": None}
+            return dict(report)
+        # Accuracy wins; on a tie prefer the gate-focused model over car/driveway pixels.
+        accuracy, class_min, model, train, checked = max(
+            results, key=lambda x: (x[0], x[1], x[2] == "gate_band"))
+        passed = accuracy >= 0.90 and class_min >= 0.80
+        report = {
+            "status": "READY_POC" if passed else "EVALUATION_FAILED",
+            "reason": "HOLDOUT_PASSED" if passed else "HOLDOUT_ACCURACY_LOW",
+            "accuracy_pct": round(accuracy * 100, 1),
+            "min_class_accuracy_pct": round(class_min * 100, 1),
+            "model": model,
+            "evaluated": sum(checked.values()),
+            "open_evaluated": checked["OPEN"],
+            "closed_evaluated": checked["CLOSED"],
+            "reference_per_class": n - holdout,
+        }
+        self._evaluation_cache = {"key": key, "report": report,
+                                  "train": train if passed else None}
+        # Do not grow image feature caches indefinitely over the 14-day retention.
+        self._focused_cache = {sid: self._focused_cache[sid]
+                               for sid in [r["id"] for k in selected for r in selected[k]]
+                               if sid in self._focused_cache}
+        return dict(report)
+
+    def classify_diagnostic(self, jpeg):
+        """Return label, margin and sanitized reason. No pictures or locations."""
+        report = self.evaluate()
+        if report["status"] != "READY_POC":
+            return "UNKNOWN", 0.0, {
+                "reason": report["reason"], "model": report["model"], "similarity": 0.0}
         try:
-            _, test = feature(jpeg)
-        except ValueError:
-            return "UNKNOWN", 0.0
-        scores = {k: max(similarity(test, v) for v in vectors)
-                  for k, vectors in classes.items()}
+            crop, full_vector = feature(jpeg)
+            vector = (self._focused_vector(crop)
+                      if report["model"] == "gate_band" else full_vector)
+        except (ValueError, OSError):
+            return "UNKNOWN", 0.0, {
+                "reason": "INVALID_CAMERA_FRAME", "model": report["model"],
+                "similarity": 0.0}
+        scores = self._score(vector, self._evaluation_cache["train"])
         best = max(scores, key=scores.get)
-        margin = scores[best] - scores["CLOSED" if best == "OPEN" else "OPEN"]
-        if scores[best] < .93 or margin < .12:
-            return "UNKNOWN", round(max(0.0, margin), 3)
-        return best, round(min(1.0, margin), 3)
+        other = "CLOSED" if best == "OPEN" else "OPEN"
+        similarity_score = scores[best]
+        margin = max(0.0, scores[best] - scores[other])
+        if similarity_score < 0.93:
+            reason = "LOW_SIMILARITY"
+        elif margin < 0.12:
+            reason = "AMBIGUOUS_MARGIN"
+        else:
+            reason = "MODEL_CONFIDENT"
+        return (best if reason == "MODEL_CONFIDENT" else "UNKNOWN",
+                round(margin, 3),
+                {"reason": reason, "model": report["model"],
+                 "similarity": round(similarity_score, 3)})
+
+    def classify(self, jpeg):
+        label, margin, _ = self.classify_diagnostic(jpeg)
+        return label, margin

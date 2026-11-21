@@ -95,6 +95,7 @@ class GateAdvisor:
         self.day = ""
         self.sent_today = 0
         self.latest = "UNKNOWN"
+        self.vision_diagnostic = {"reason": "NOT_YET_CHECKED", "model": "none", "similarity": 0.0}
         self.enabled = os.environ.get("HA_GATE_ADVISOR", "false").lower() == "true"
         self.dataset = GateDataset()
         self.dashboard_signature = None
@@ -116,20 +117,22 @@ class GateAdvisor:
     def dashboard_states(self, confidence=0.0):
         """Whitelist safe numeric learning stats and visual state only."""
         s = self.dataset.stats()
+        evaluation = self.dataset.evaluate()
+        diagnostic = self.vision_diagnostic
         ready = min(s["open"], 6) + min(s["closed"], 6)
         progress = round(100 * ready / 12)
         last_capture = s.get("last_sample_utc") or "unknown"
         return {
             "sensor.hermes_gate_learning": {
-                "state": ("COLLECTING" if s["enabled"] and ready < 12 else
-                          "EVALUATION_PENDING" if s["enabled"] else "DISABLED"),
+                "state": evaluation["status"],
                 "attributes": {
                     "friendly_name": "Hermes Gate Learning",
                     "icon": "mdi:brain",
                     "capture_interval_minutes": 30,
                     "retention_days": 14,
                     "mode": "suggestion_only",
-                    "model_accuracy_verified": False,
+                    "model_accuracy_verified": False,  # Holdout POC != field safety validation.
+                    "evaluation_reason": evaluation["reason"],
                 },
             },
             "sensor.hermes_gate_samples": {
@@ -156,6 +159,31 @@ class GateAdvisor:
             "sensor.hermes_gate_last_capture": {
                 "state": last_capture,
                 "attributes": {"friendly_name": "Capture Terakhir", "icon": "mdi:camera-clock"},
+            },
+            "sensor.hermes_gate_evaluation": {
+                "state": (str(evaluation["accuracy_pct"])
+                          if evaluation["accuracy_pct"] is not None else "unknown"),
+                "attributes": {
+                    "friendly_name": "Gate Holdout Accuracy (POC)",
+                    "icon": "mdi:chart-bell-curve",
+                    "unit_of_measurement": "%",
+                    "model": evaluation["model"],
+                    "reason": evaluation["reason"],
+                    "evaluated": evaluation["evaluated"],
+                    "min_class_accuracy_pct": evaluation.get("min_class_accuracy_pct"),
+                    "open_evaluated": evaluation.get("open_evaluated", 0),
+                    "closed_evaluated": evaluation.get("closed_evaluated", 0),
+                    "not_field_validated": True,
+                },
+            },
+            "sensor.hermes_gate_detection_reason": {
+                "state": diagnostic.get("reason", "NOT_YET_CHECKED"),
+                "attributes": {
+                    "friendly_name": "Why Vision Is UNKNOWN",
+                    "icon": "mdi:help-circle-outline",
+                    "model": diagnostic.get("model", "none"),
+                    "similarity": diagnostic.get("similarity", 0.0),
+                },
             },
             "sensor.hermes_gate_visual": {
                 "state": self.latest,
@@ -194,30 +222,47 @@ class GateAdvisor:
         if not isinstance(data,list): raise RuntimeError("states_payload")
         return {x.get("entity_id"):x for x in data if isinstance(x,dict)}
 
-    async def _visual(self,session,states):
-        cam=states.get(CAMERA,{})
-        if cam.get("state") in ("unknown","unavailable",None):
-            return "UNKNOWN",0.0
-        sun=states.get("sun.sun",{})
+    async def _visual(self, session, states):
+        self.vision_diagnostic = {
+            "reason": "NOT_YET_CHECKED", "model": "none", "similarity": 0.0}
+        cam = states.get(CAMERA, {})
+        if cam.get("state") in ("unknown", "unavailable", None):
+            self.vision_diagnostic["reason"] = "CAMERA_UNAVAILABLE"
+            return "UNKNOWN", 0.0
+        sun = states.get("sun.sun", {})
         sunlight = sun.get("state") == "above_horizon"
-        # Night frames are saved every 30 min, but night classification stays UNKNOWN.
+        # Night frames may still be collected, but no night classification.
         if not sunlight and not self.dataset.due():
-            return "UNKNOWN",0.0
-        async with session.get(API+"/camera_proxy/"+CAMERA,headers=HEADERS,timeout=23) as r:
-            if r.status != 200: return "UNKNOWN",0.0
-            image=await r.read()
-            if len(image)>6000000: return "UNKNOWN",0.0
+            self.vision_diagnostic["reason"] = "NIGHT_NOT_VALIDATED"
+            return "UNKNOWN", 0.0
+        async with session.get(API + "/camera_proxy/" + CAMERA,
+                               headers=HEADERS, timeout=23) as r:
+            if r.status != 200:
+                self.vision_diagnostic["reason"] = "CAMERA_HTTP_ERROR"
+                return "UNKNOWN", 0.0
+            image = await r.read()
+            if len(image) > 6000000:
+                self.vision_diagnostic["reason"] = "CAMERA_FRAME_TOO_LARGE"
+                return "UNKNOWN", 0.0
         if self.dataset.due():
             if self.dataset.capture_routine(image, sun.get("state", "unknown")):
                 print("HERMES_GATE_DATASET: sample_saved=true", flush=True)
         if not sunlight:
-            return "UNKNOWN",0.0
-        learned, margin = self.dataset.classify(image)
-        if learned in ("OPEN", "CLOSED"):
+            self.vision_diagnostic["reason"] = "NIGHT_NOT_VALIDATED"
+            return "UNKNOWN", 0.0
+        if self.dataset.enabled:
+            learned, margin, diagnostic = self.dataset.classify_diagnostic(image)
+            self.vision_diagnostic = diagnostic
+            # Do not bypass a failed holdout evaluation with the old two-template
+            # fallback. Suggestion-only remains in effect even when POC_READY.
             return learned, margin
-        return classify_jpeg(image)
+        fallback, margin = classify_jpeg(image)
+        self.vision_diagnostic = {
+            "reason": "LEGACY_TEMPLATE_ONLY" if fallback != "UNKNOWN"
+                      else "TEMPLATE_UNCERTAIN",
+            "model": "legacy_template", "similarity": 0.0}
+        return fallback, margin
 
-    @staticmethod
     def _presence(states):
         members=[r for k,r in states.items() if k.startswith("person.")]
         if not members or len(members)<2: return False
@@ -340,6 +385,8 @@ class GateAdvisor:
             current, confidence=await self._visual(session,states)
         except Exception:
             self.latest="UNKNOWN"
+            self.vision_diagnostic = {
+                "reason": "SENSOR_READ_FAILED", "model": "none", "similarity": 0.0}
             self.visual_history=[]
             self._save(reason="sensor_read_failed")
             with contextlib.suppress(Exception):
