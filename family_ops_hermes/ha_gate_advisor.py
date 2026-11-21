@@ -263,6 +263,7 @@ class GateAdvisor:
             "model": "legacy_template", "similarity": 0.0}
         return fallback, margin
 
+    @staticmethod
     def _presence(states):
         members=[r for k,r in states.items() if k.startswith("person.")]
         if not members or len(members)<2: return False
