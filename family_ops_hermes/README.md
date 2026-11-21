@@ -101,3 +101,11 @@ All live reads use the existing Home Assistant API credentials inside the add-on
 ## Runtime fix (v46)
 
 - Restore the staticmethod binding for `_presence`. A missing decorator in v45 caused a runtime TypeError in `check_once` after a valid camera read; this stopped virtual gate sensor refresh. Add an instance-level regression test. No change to gate motor restrictions.
+
+
+## Gate Shape Structure Benchmark (v47, non-actuating)
+
+- Add Pillow-only structural line-gradient candidates (`edge_gate`, `edge_center`, `edge_luma`) rebuilt locally from the already-labelled, retained gate crops. No raw CCTV data, vectors or locations leave the add-on.
+- Compare OPEN and CLOSED recall independently with time-ordered held-out frames; prefer holding out a *whole 15-minute-separated gate event* when sufficient distinct events exist. Report event diversity, held-out accuracy, per-class recall, evaluation split and whether a candidate is eligible for later promotion.
+- Publish only sanitized aggregate metrics in `sensor.hermes_gate_shape_accuracy`. All candidates remain **dry-run only**; original validated classifier, gate recommendations, Telegram and physical controls are not changed by this benchmark. `ready_to_promote` is only a code-development signal, never permission for motor control.
+- If no distinct opening event has been captured for validation, status `EXPLORATORY_ONLY` is intentional even if the percentage looks high. Real field validation is still required.

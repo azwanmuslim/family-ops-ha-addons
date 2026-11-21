@@ -66,6 +66,7 @@ class GateDataset:
         self.errors = 0
         self._focused_cache = {}
         self._evaluation_cache = None
+        self._shape_probe = None
         if self.enabled:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             self.root.chmod(0o700)
@@ -394,6 +395,23 @@ class GateDataset:
                                for sid in [r["id"] for k in selected for r in selected[k]]
                                if sid in self._focused_cache}
         return dict(report)
+
+    def shape_benchmark(self):
+        """Optional dry-run candidate test, never changes the active classifier."""
+        if not self.enabled:
+            return {"status": "DISABLED", "accuracy_pct": None,
+                    "model": "none", "is_dry_run": True}
+        try:
+            from ha_gate_structure import GateShapeProbe
+            if self._shape_probe is None:
+                self._shape_probe = GateShapeProbe(self.root)
+            rows = [row for _, row in self.entries()
+                    if row.get("roi") == list(ROI) and row.get("verified")
+                    and row.get("label") in ("OPEN", "CLOSED")]
+            return self._shape_probe.evaluate(rows)
+        except (OSError, ValueError, TypeError, KeyError, ImportError):
+            return {"status": "DIAGNOSTIC_ERROR", "accuracy_pct": None,
+                    "model": "none", "is_dry_run": True}
 
     def classify_diagnostic(self, jpeg):
         """Return label, margin and sanitized reason. No pictures or locations."""

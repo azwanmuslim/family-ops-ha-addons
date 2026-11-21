@@ -118,6 +118,7 @@ class GateAdvisor:
         """Whitelist safe numeric learning stats and visual state only."""
         s = self.dataset.stats()
         evaluation = self.dataset.evaluate()
+        shape = self.dataset.shape_benchmark()
         diagnostic = self.vision_diagnostic
         ready = min(s["open"], 6) + min(s["closed"], 6)
         progress = round(100 * ready / 12)
@@ -174,6 +175,25 @@ class GateAdvisor:
                     "open_evaluated": evaluation.get("open_evaluated", 0),
                     "closed_evaluated": evaluation.get("closed_evaluated", 0),
                     "not_field_validated": True,
+                },
+            },
+            "sensor.hermes_gate_shape_accuracy": {
+                "state": (str(shape["accuracy_pct"])
+                          if shape.get("accuracy_pct") is not None else "unknown"),
+                "attributes": {
+                    "friendly_name": "Gate Structure Benchmark (Dry Run)",
+                    "icon": "mdi:chart-timeline-variant",
+                    "unit_of_measurement": "%",
+                    "status": shape.get("status", "unknown"),
+                    "model": shape.get("model", "none"),
+                    "open_recall_pct": shape.get("open_recall_pct"),
+                    "closed_recall_pct": shape.get("closed_recall_pct"),
+                    "open_events": shape.get("open_events", 0),
+                    "closed_events": shape.get("closed_events", 0),
+                    "tested": shape.get("tested", 0),
+                    "split": shape.get("split", "none"),
+                    "ready_to_promote": bool(shape.get("ready_to_promote")),
+                    "dry_run_only": True,
                 },
             },
             "sensor.hermes_gate_detection_reason": {
