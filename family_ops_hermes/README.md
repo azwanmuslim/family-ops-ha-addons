@@ -109,3 +109,11 @@ All live reads use the existing Home Assistant API credentials inside the add-on
 - Compare OPEN and CLOSED recall independently with time-ordered held-out frames; prefer holding out a *whole 15-minute-separated gate event* when sufficient distinct events exist. Report event diversity, held-out accuracy, per-class recall, evaluation split and whether a candidate is eligible for later promotion.
 - Publish only sanitized aggregate metrics in `sensor.hermes_gate_shape_accuracy`. All candidates remain **dry-run only**; original validated classifier, gate recommendations, Telegram and physical controls are not changed by this benchmark. `ready_to_promote` is only a code-development signal, never permission for motor control.
 - If no distinct opening event has been captured for validation, status `EXPLORATORY_ONLY` is intentional even if the percentage looks high. Real field validation is still required.
+
+
+## v48 data-driven gate-region benchmark (no model promotion)
+
+- Fix validation leakage: hold out the final quarter of **15-minute-separated independent OPEN and CLOSED events**, instead of withholding a few consecutive frames from one event. CLOSED references are spread across time to cover different light conditions.
+- Compare six dry-run classifiers. Three v47 line-gradient candidates and three v48 pixel-mask candidates. v48 learns the most discriminative brightness or edge positions from **training events only**, taking class variance into account, and evaluates on completely withheld events.
+- Report **balanced accuracy** (average of OPEN and CLOSED recall) and per-class metrics, plus aggregate candidate scores to Home Assistant. Do not confuse this metric with prior 25%-sample or v47 50%-sample results; their validation splits differed.
+- Still no new active classifier, no gate motor control, no image/GPS/vector export and no persisted new model. Keep `UNKNOWN` if validation is weak or either class fails.
