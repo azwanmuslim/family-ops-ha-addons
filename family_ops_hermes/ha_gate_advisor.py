@@ -194,6 +194,8 @@ class GateAdvisor:
                     "split": shape.get("split", "none"),
                     "ready_to_promote": bool(shape.get("ready_to_promote")),
                     "dry_run_only": True,
+                    "metric": shape.get("metric", "none"),
+                    "candidate_scores": shape.get("candidate_scores", {}),
                 },
             },
             "sensor.hermes_gate_detection_reason": {
