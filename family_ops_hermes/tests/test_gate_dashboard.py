@@ -58,6 +58,16 @@ class GateDashboardTests(unittest.IsolatedAsyncioTestCase):
             for forbidden in ("latitude", "longitude", "token", "camera_proxy", "jpg", "base64", "switch.bothgate"):
                 self.assertNotIn(forbidden, snapshot)
 
+    async def test_presence_called_from_running_instance(self):
+        # Regression: advisor.check_once invokes self._presence(states).
+        g = GateAdvisor(lambda *_: None)
+        states = {"person.a": {"state": "not_home"},
+                  "person.b": {"state": "not_home"},
+                  "group.family": {"state": "not_home"}}
+        self.assertTrue(g._presence(states))
+        states["person.b"]["state"] = "unknown"
+        self.assertFalse(g._presence(states))
+
     async def test_posts_only_when_changed_or_due(self):
         with tempfile.TemporaryDirectory() as td:
             g = GateAdvisor(lambda *_: None)
