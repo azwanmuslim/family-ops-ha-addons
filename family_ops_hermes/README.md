@@ -96,3 +96,8 @@ All live reads use the existing Home Assistant API credentials inside the add-on
 - Publish sanitized evaluation accuracy and UNKNOWN reasons to Home Assistant sensors, with model selection, without uploading raw images, vectors, coordinates or device secrets.
 - When the labelled local dataset is enabled, do not bypass failed evaluation with the old two-reference template. Night remains UNKNOWN.
 - The 14-day photo retention, review queue, snapshot-now and suggestions-only motor restriction are unchanged.
+
+
+## Runtime fix (v46)
+
+- Restore the staticmethod binding for `_presence`. A missing decorator in v45 caused a runtime TypeError in `check_once` after a valid camera read; this stopped virtual gate sensor refresh. Add an instance-level regression test. No change to gate motor restrictions.
