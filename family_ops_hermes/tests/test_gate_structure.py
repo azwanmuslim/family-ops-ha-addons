@@ -1,5 +1,6 @@
 """Private gate shape benchmark: no online model switch, no gate actuation."""
 import io
+import json
 import tempfile
 import time
 import unittest
@@ -52,6 +53,29 @@ class ShapeProbeTests(unittest.TestCase):
             self.assertTrue(report["is_dry_run"])
             self.assertEqual(store.stats()["samples"], 16)
             self.assertEqual(store.shape_benchmark(), report)
+
+    def test_distinct_event_holdout_and_mask_candidates(self):
+        # Events are separated by >15 minutes; holdout is by event, not frame.
+        with tempfile.TemporaryDirectory() as folder:
+            store = GateDataset(enabled=True, root=folder)
+            now = time.time()
+            for i in range(9):
+                for label, opened in (("OPEN", True), ("CLOSED", False)):
+                    sid = store.save(frame(opened), label=label,
+                                     source="owner_confirmed", return_id=True)
+                    meta = Path(folder) / (sid + ".json")
+                    row = json.loads(meta.read_text())
+                    row["timestamp"] = now - (9 - i) * 3600
+                    meta.write_text(json.dumps(row))
+            report = store.shape_benchmark()
+            self.assertEqual(report["open_events"], 9)
+            self.assertEqual(report["closed_events"], 9)
+            self.assertEqual(report["split"], "event_holdout")
+            self.assertGreaterEqual(report["tested"], 4)
+            self.assertIn("mask_gray", report["candidate_scores"])
+            self.assertIn("mask_vertical", report["candidate_scores"])
+            self.assertTrue(report["is_dry_run"])
+            self.assertEqual(store.stats()["samples"], 18)
 
     def test_disabled_never_reads_or_creates_data(self):
         with tempfile.TemporaryDirectory() as folder:
