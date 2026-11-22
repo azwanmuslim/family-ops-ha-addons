@@ -39,6 +39,7 @@ COPY ha_home_capabilities.py /ha_home_capabilities.py
 COPY ha_gate_advisor.py /ha_gate_advisor.py
 COPY ha_gate_dataset.py /ha_gate_dataset.py
 COPY ha_gate_structure.py /ha_gate_structure.py
+COPY ha_gate_shadow.py /ha_gate_shadow.py
 COPY ha_gate_review.py /ha_gate_review.py
 COPY gate-review.html /usr/share/nginx/html/gate-review.html
 COPY run.sh /run.sh
