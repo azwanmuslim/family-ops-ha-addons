@@ -117,3 +117,12 @@ All live reads use the existing Home Assistant API credentials inside the add-on
 - Compare six dry-run classifiers. Three v47 line-gradient candidates and three v48 pixel-mask candidates. v48 learns the most discriminative brightness or edge positions from **training events only**, taking class variance into account, and evaluates on completely withheld events.
 - Report **balanced accuracy** (average of OPEN and CLOSED recall) and per-class metrics, plus aggregate candidate scores to Home Assistant. Do not confuse this metric with prior 25%-sample or v47 50%-sample results; their validation splits differed.
 - Still no new active classifier, no gate motor control, no image/GPS/vector export and no persisted new model. Keep `UNKNOWN` if validation is weak or either class fails.
+
+
+## v49 frozen shadow trial (suggestions-only, no gate controls)
+
+- When `mask_vertical` passes historical separate-event validation with at least 90% recall per OPEN and CLOSED, freeze local training-only feature means and weights at first daytime shadow inference into a permission-0600 file under existing private `/data/gate_vision`. The image crop stays in the add-on; no raw image or features are exported.
+- An unverified **new** Snapshot Now or routine image is scored *before* it is saved; its `shadow_prediction` and frozen `shadow_model_id` are stored alongside its local image metadata. Later OPEN/CLOSED review cannot retroactively rewrite the prediction, and new labels do not retrain the frozen shadow model.
+- `sensor.hermes_gate_shadow_visual` reports an independent live **shadow-only** observation; `sensor.hermes_gate_shadow_validation` reports accuracy only for **owner-confirmed images captured after shadow started**, per-class recall and independent event counts. Historical 96.9% benchmark is *not* live shadow accuracy.
+- Require at least 5 distinct OPEN events and 10 CLOSED events plus >=90% post-label recall in **both** classes for `EVIDENCE_FOR_MANUAL_REVIEW`. This status triggers NO model promotion, no suggestion change, no Telegram automation, and absolutely no `switch.bothgate` or gate service calls. The active classifier still outputs UNKNOWN if its separate evaluation fails.
+- Frame collection remains 30-minute routine plus manual Snapshot Now, 14-day photo retention, and daytime inference only. Overnight/invalid/unavailable confidence remains UNKNOWN. Only the existing Hermes add-on should be updated; preserve existing /data and all HA integrations.

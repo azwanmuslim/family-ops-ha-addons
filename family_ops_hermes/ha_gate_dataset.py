@@ -67,6 +67,7 @@ class GateDataset:
         self._focused_cache = {}
         self._evaluation_cache = None
         self._shape_probe = None
+        self._shadow_probe = None
         if self.enabled:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             self.root.chmod(0o700)
@@ -128,11 +129,14 @@ class GateDataset:
         stamp = time.time()
         stamp_id = dt.datetime.fromtimestamp(stamp, dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
         sample_id = stamp_id + "-" + secrets.token_hex(4)
+        shadow = self.shadow_predict_crop(cropped, sun)
         record = {
             "id": sample_id, "timestamp": stamp,
             "label": label, "source": source, "sun": str(sun)[:24],
             "verified": source == "owner_confirmed",
             "vector": vector, "roi": list(ROI),
+            "shadow_prediction": shadow["prediction"],
+            "shadow_model_id": shadow["model_id"],
         }
         photo = self.root / (sample_id + ".jpg")
         meta = self.root / (sample_id + ".json")
@@ -412,6 +416,48 @@ class GateDataset:
         except (OSError, ValueError, TypeError, KeyError, ImportError):
             return {"status": "DIAGNOSTIC_ERROR", "accuracy_pct": None,
                     "model": "none", "is_dry_run": True}
+
+    def _shadow(self):
+        from ha_gate_shadow import GateShadow
+        if self._shadow_probe is None:
+            self._shadow_probe = GateShadow(self.root)
+        return self._shadow_probe
+
+    def shadow_predict_crop(self, cropped, sun="above_horizon"):
+        """Read-only shadow prediction; never changes active classifier."""
+        if not self.enabled:
+            return {"prediction": "UNKNOWN", "reason": "DATASET_DISABLED",
+                    "model_id": "none"}
+        try:
+            return self._shadow().predict(cropped, self, sun)
+        except (OSError, ValueError, TypeError, KeyError, ImportError):
+            return {"prediction": "UNKNOWN", "reason": "SHADOW_ERROR",
+                    "model_id": "none"}
+
+    def shadow_predict(self, camera_jpeg, sun="above_horizon"):
+        """Use the exact same crop as stored samples, without a motor call."""
+        if not self.enabled or sun != "above_horizon":
+            return {"prediction": "UNKNOWN", "reason": "NOT_DAYLIGHT_OR_DISABLED",
+                    "model_id": "none"}
+        try:
+            cropped, _ = feature(camera_jpeg)
+            return self.shadow_predict_crop(cropped, sun)
+        except (OSError, ValueError, TypeError):
+            return {"prediction": "UNKNOWN", "reason": "INVALID_CAMERA_FRAME",
+                    "model_id": "none"}
+
+    def shadow_stats(self):
+        """Aggregate only owner-verified images scored BEFORE their labels."""
+        if not self.enabled:
+            return {"status": "DISABLED", "accuracy_pct": None,
+                    "model_id": "none", "ready_for_manual_review": False}
+        try:
+            rows = [row for _, row in self.entries()
+                    if row.get("roi") == list(ROI)]
+            return self._shadow().verification(rows)
+        except (OSError, ValueError, TypeError, KeyError, ImportError):
+            return {"status": "SHADOW_STATS_ERROR", "accuracy_pct": None,
+                    "model_id": "none", "ready_for_manual_review": False}
 
     def classify_diagnostic(self, jpeg):
         """Return label, margin and sanitized reason. No pictures or locations."""

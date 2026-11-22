@@ -22,6 +22,7 @@ jobs:
           python -m py_compile family_ops_hermes/ha_gate_advisor.py
           python -m py_compile family_ops_hermes/ha_gate_dataset.py
           python -m py_compile family_ops_hermes/ha_gate_structure.py
+          python -m py_compile family_ops_hermes/ha_gate_shadow.py
           python -m py_compile family_ops_hermes/ha_gate_review.py
           python -m py_compile family_ops_hermes/codex-direct-check.py
           python -m py_compile family_ops_hermes/codex-model-discovery-v5.py
@@ -38,7 +39,7 @@ jobs:
           import pathlib,yaml
           root = pathlib.Path('family_ops_hermes')
           cfg = yaml.safe_load((root/'config.yaml').read_text())
-          assert cfg['version'] == '2026.5.7-48'
+          assert cfg['version'] == '2026.5.7-49'
           assert cfg['homeassistant_api'] is True
           assert cfg['options']['ha_telegram_bridge'] is False
           assert cfg['options']['ha_gate_advisor'] is False
@@ -53,11 +54,12 @@ jobs:
           assert 'COPY ha_gate_advisor.py /ha_gate_advisor.py' in dockerfile
           assert 'COPY ha_gate_dataset.py /ha_gate_dataset.py' in dockerfile
           assert 'COPY ha_gate_structure.py /ha_gate_structure.py' in dockerfile
+          assert 'COPY ha_gate_shadow.py /ha_gate_shadow.py' in dockerfile
           assert 'COPY ha_gate_review.py /ha_gate_review.py' in dockerfile
           assert 'COPY gate-review.html /usr/share/nginx/html/gate-review.html' in dockerfile
           assert 'HA_TELEGRAM_BRIDGE' in (root/'run.sh').read_text()
           assert 'HA_GATE_ADVISOR' in (root/'run.sh').read_text()
           assert 'HA_GATE_DATASET' in (root/'run.sh').read_text()
           assert 'ha-telegram-bridge.py' in (root/'addon-run.sh').read_text()
-          print('Validated v48 event holdout and pixel-mask dry-run')
+          print('Validated v49 frozen gate shadow scoring and no auto promotion')
           PY
