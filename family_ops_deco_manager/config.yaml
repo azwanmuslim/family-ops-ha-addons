@@ -1,0 +1,19 @@
+name: "Family Ops Deco Manager"
+description: "Private, read-only TP-Link Deco configuration audit for Home Assistant"
+version: "0.1.0"
+slug: family_ops_deco_manager
+init: false
+arch:
+  - aarch64
+startup: application
+boot: manual
+options:
+  deco_host: "192.168.0.1"
+  deco_email: ""
+  deco_password: ""
+  api_key: ""
+schema:
+  deco_host: str
+  deco_email: str?
+  deco_password: password?
+  api_key: password?
