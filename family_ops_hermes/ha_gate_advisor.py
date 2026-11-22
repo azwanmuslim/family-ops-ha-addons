@@ -96,6 +96,7 @@ class GateAdvisor:
         self.sent_today = 0
         self.latest = "UNKNOWN"
         self.vision_diagnostic = {"reason": "NOT_YET_CHECKED", "model": "none", "similarity": 0.0}
+        self.shadow_live = {"prediction": "UNKNOWN", "reason": "NOT_YET_CHECKED", "model_id": "none"}
         self.enabled = os.environ.get("HA_GATE_ADVISOR", "false").lower() == "true"
         self.dataset = GateDataset()
         self.dashboard_signature = None
@@ -119,6 +120,7 @@ class GateAdvisor:
         s = self.dataset.stats()
         evaluation = self.dataset.evaluate()
         shape = self.dataset.shape_benchmark()
+        shadow = self.dataset.shadow_stats()
         diagnostic = self.vision_diagnostic
         ready = min(s["open"], 6) + min(s["closed"], 6)
         progress = round(100 * ready / 12)
@@ -198,6 +200,40 @@ class GateAdvisor:
                     "candidate_scores": shape.get("candidate_scores", {}),
                 },
             },
+            "sensor.hermes_gate_shadow_visual": {
+                "state": self.shadow_live.get("prediction", "UNKNOWN"),
+                "attributes": {
+                    "friendly_name": "Shadow Visual Gate (NO ACTIONS)",
+                    "icon": "mdi:eye-check-outline",
+                    "model": "mask_vertical_frozen_v1",
+                    "reason": self.shadow_live.get("reason", "UNKNOWN"),
+                    "frozen_model_id": self.shadow_live.get("model_id", "none"),
+                    "controls_actuator": False,
+                    "is_active_classifier": False,
+                },
+            },
+            "sensor.hermes_gate_shadow_validation": {
+                "state": (str(shadow.get("accuracy_pct"))
+                          if shadow.get("accuracy_pct") is not None else "unknown"),
+                "attributes": {
+                    "friendly_name": "Shadow Validation Accuracy (Post-label)",
+                    "icon": "mdi:check-decagram-outline",
+                    "unit_of_measurement": "%",
+                    "status": shadow.get("status", "unknown"),
+                    "model": shadow.get("model", "none"),
+                    "model_id": shadow.get("model_id", "none"),
+                    "open_verified": shadow.get("open_verified", 0),
+                    "closed_verified": shadow.get("closed_verified", 0),
+                    "open_events": shadow.get("open_events", 0),
+                    "closed_events": shadow.get("closed_events", 0),
+                    "open_recall_pct": shadow.get("open_recall_pct"),
+                    "closed_recall_pct": shadow.get("closed_recall_pct"),
+                    "ready_for_manual_review": bool(
+                        shadow.get("ready_for_manual_review", False)),
+                    "no_auto_promotion": True,
+                    "no_gate_actuation": True,
+                },
+            },
             "sensor.hermes_gate_detection_reason": {
                 "state": diagnostic.get("reason", "NOT_YET_CHECKED"),
                 "attributes": {
@@ -247,6 +283,7 @@ class GateAdvisor:
     async def _visual(self, session, states):
         self.vision_diagnostic = {
             "reason": "NOT_YET_CHECKED", "model": "none", "similarity": 0.0}
+        self.shadow_live = {"prediction": "UNKNOWN", "reason": "NOT_CHECKED", "model_id": "none"}
         cam = states.get(CAMERA, {})
         if cam.get("state") in ("unknown", "unavailable", None):
             self.vision_diagnostic["reason"] = "CAMERA_UNAVAILABLE"
@@ -273,6 +310,7 @@ class GateAdvisor:
             self.vision_diagnostic["reason"] = "NIGHT_NOT_VALIDATED"
             return "UNKNOWN", 0.0
         if self.dataset.enabled:
+            self.shadow_live = self.dataset.shadow_predict(image, sun.get("state", "unknown"))
             learned, margin, diagnostic = self.dataset.classify_diagnostic(image)
             self.vision_diagnostic = diagnostic
             # Do not bypass a failed holdout evaluation with the old two-template
@@ -410,6 +448,7 @@ class GateAdvisor:
             self.latest="UNKNOWN"
             self.vision_diagnostic = {
                 "reason": "SENSOR_READ_FAILED", "model": "none", "similarity": 0.0}
+            self.shadow_live = {"prediction": "UNKNOWN", "reason": "SENSOR_READ_FAILED", "model_id": "none"}
             self.visual_history=[]
             self._save(reason="sensor_read_failed")
             with contextlib.suppress(Exception):
