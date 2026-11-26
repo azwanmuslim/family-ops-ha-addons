@@ -175,7 +175,18 @@ class GateDataset:
                 if response.status != 200:
                     return "CCTV gagal capture. Tiada sampel dilabel."
                 jpeg = await response.read()
-            self.save(jpeg, label=label, source="owner_confirmed")
+            # Use the same daylight metadata as periodic and dashboard captures.
+            # Failure to read the sun must not prevent the owner saving a label.
+            sun = "unknown"
+            try:
+                async with session.get(api + "/states/sun.sun", headers=headers, timeout=3) as response:
+                    if response.status == 200:
+                        state = await response.json()
+                        if isinstance(state, dict) and state.get("state") in ("above_horizon", "below_horizon"):
+                            sun = state["state"]
+            except Exception:
+                pass
+            self.save(jpeg, label=label, source="owner_confirmed", sun=sun)
             return ("✅ Sampel CCTV terkini disahkan " + label +
                     ". Hermes akan guna data disahkan untuk penilaian classifier; gate tidak dikawal.")
         except Exception:
