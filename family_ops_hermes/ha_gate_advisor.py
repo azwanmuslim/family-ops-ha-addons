@@ -118,10 +118,18 @@ class GateAdvisor:
     def dashboard_states(self, confidence=0.0):
         """Whitelist safe numeric learning stats and visual state only."""
         s = self.dataset.stats()
-        evaluation = self.dataset.evaluate()
         shape = self.dataset.shape_benchmark()
-        shadow = self.dataset.shadow_stats()
+        shadow = self.dataset.shadow_stats()  # optional quality telemetry only
         diagnostic = self.vision_diagnostic
+        active = diagnostic.get("model_id", "none") != "none"
+        evaluation = {
+            "status": "ACTIVE_VISION" if active else ("COLLECTING" if min(s["open"], s["closed"]) < 6 else "MODEL_UNAVAILABLE"),
+            "reason": diagnostic.get("reason", "NOT_YET_CHECKED"),
+            "model": diagnostic.get("model", "none"),
+            # Historical benchmark is not a field-accuracy certificate.
+            "accuracy_pct": shape.get("accuracy_pct"),
+            "evaluated": shape.get("tested", 0),
+        }
         ready = min(s["open"], 6) + min(s["closed"], 6)
         progress = round(100 * ready / 12)
         last_capture = s.get("last_sample_utc") or "unknown"
@@ -167,10 +175,11 @@ class GateAdvisor:
                 "state": (str(evaluation["accuracy_pct"])
                           if evaluation["accuracy_pct"] is not None else "unknown"),
                 "attributes": {
-                    "friendly_name": "Gate Holdout Accuracy (POC)",
+                    "friendly_name": "Gate Historical Structure Benchmark",
                     "icon": "mdi:chart-bell-curve",
                     "unit_of_measurement": "%",
-                    "model": evaluation["model"],
+                    "model": shape.get("model", "none"),
+                    "active_model": evaluation["model"],
                     "reason": evaluation["reason"],
                     "evaluated": evaluation["evaluated"],
                     "min_class_accuracy_pct": evaluation.get("min_class_accuracy_pct"),
@@ -203,13 +212,13 @@ class GateAdvisor:
             "sensor.hermes_gate_shadow_visual": {
                 "state": self.shadow_live.get("prediction", "UNKNOWN"),
                 "attributes": {
-                    "friendly_name": "Shadow Visual Gate (NO ACTIONS)",
+                    "friendly_name": "Active Structure Prediction (compatibility)",
                     "icon": "mdi:eye-check-outline",
                     "model": "mask_vertical_frozen_v1",
                     "reason": self.shadow_live.get("reason", "UNKNOWN"),
                     "frozen_model_id": self.shadow_live.get("model_id", "none"),
                     "controls_actuator": False,
-                    "is_active_classifier": False,
+                    "is_active_classifier": active,
                 },
             },
             "sensor.hermes_gate_shadow_validation": {
@@ -245,9 +254,11 @@ class GateAdvisor:
             },
             "sensor.hermes_gate_visual": {
                 "state": self.latest,
-                "attributes": {"friendly_name": "Visual Gate (POC)", "icon": "mdi:gate",
+                "attributes": {"friendly_name": "Visual Gate (CCTV estimate)", "icon": "mdi:gate",
                                "confidence_margin": round(float(confidence), 3),
-                               "is_physical_sensor": False},
+                               "model": diagnostic.get("model", "none"),
+                               "model_id": diagnostic.get("model_id", "none"),
+                               "is_physical_sensor": False, "controls_actuator": False},
             },
             "sensor.hermes_gate_collection_errors": {
                 "state": str(s["errors"]),
@@ -289,11 +300,7 @@ class GateAdvisor:
             self.vision_diagnostic["reason"] = "CAMERA_UNAVAILABLE"
             return "UNKNOWN", 0.0
         sun = states.get("sun.sun", {})
-        sunlight = sun.get("state") == "above_horizon"
-        # Night frames may still be collected, but no night classification.
-        if not sunlight and not self.dataset.due():
-            self.vision_diagnostic["reason"] = "NIGHT_NOT_VALIDATED"
-            return "UNKNOWN", 0.0
+        lighting = sun.get("state", "unknown")
         async with session.get(API + "/camera_proxy/" + CAMERA,
                                headers=HEADERS, timeout=23) as r:
             if r.status != 200:
@@ -306,22 +313,12 @@ class GateAdvisor:
         if self.dataset.due():
             if self.dataset.capture_routine(image, sun.get("state", "unknown")):
                 print("HERMES_GATE_DATASET: sample_saved=true", flush=True)
-        if not sunlight:
-            self.vision_diagnostic["reason"] = "NIGHT_NOT_VALIDATED"
-            return "UNKNOWN", 0.0
-        if self.dataset.enabled:
-            self.shadow_live = self.dataset.shadow_predict(image, sun.get("state", "unknown"))
-            learned, margin, diagnostic = self.dataset.classify_diagnostic(image)
-            self.vision_diagnostic = diagnostic
-            # Do not bypass a failed holdout evaluation with the old two-template
-            # fallback. Suggestion-only remains in effect even when POC_READY.
-            return learned, margin
-        fallback, margin = classify_jpeg(image)
-        self.vision_diagnostic = {
-            "reason": "LEGACY_TEMPLATE_ONLY" if fallback != "UNKNOWN"
-                      else "TEMPLATE_UNCERTAIN",
-            "model": "legacy_template", "similarity": 0.0}
-        return fallback, margin
+        learned, margin, diagnostic = self.dataset.active_classify(image, lighting)
+        self.vision_diagnostic = diagnostic
+        # Historical shadow entity remains a compatibility alias only.
+        self.shadow_live = {"prediction": learned, "reason": diagnostic["reason"],
+                            "model_id": diagnostic.get("model_id", "none")}
+        return learned, margin
 
     @staticmethod
     def _presence(states):

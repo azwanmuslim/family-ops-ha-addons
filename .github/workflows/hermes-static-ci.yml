@@ -39,7 +39,7 @@ jobs:
           import pathlib,yaml
           root = pathlib.Path('family_ops_hermes')
           cfg = yaml.safe_load((root/'config.yaml').read_text())
-          assert cfg['version'] == '2026.5.7-50'
+          assert cfg['version'] == '2026.5.7-51'
           assert cfg['homeassistant_api'] is True
           assert cfg['options']['ha_telegram_bridge'] is False
           assert cfg['options']['ha_gate_advisor'] is False
@@ -61,5 +61,5 @@ jobs:
           assert 'HA_GATE_ADVISOR' in (root/'run.sh').read_text()
           assert 'HA_GATE_DATASET' in (root/'run.sh').read_text()
           assert 'ha-telegram-bridge.py' in (root/'addon-run.sh').read_text()
-          print('Validated v50 blind shadow review and no auto promotion')
+          print('Validated v51 active structure visual sensor; no actuator')
           PY

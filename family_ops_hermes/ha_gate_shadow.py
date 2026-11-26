@@ -12,16 +12,19 @@ from pathlib import Path
 import secrets
 import time
 
-from ha_gate_structure import _extract_all, _mask_prediction, _mask_prototypes, _sessions
+from ha_gate_structure import _extract_all, _mask_score, _mask_prototypes, _sessions, GateShapeProbe
 
 
 class GateShadow:
     VERSION = "mask_vertical_frozen_v1"
     FILENAME = "gate_shadow_mask_vertical_v1.model"
 
-    def __init__(self, root):
+    def __init__(self, root, lighting="above_horizon"):
         self.root = Path(root)
-        self.file = self.root / self.FILENAME
+        self.lighting = lighting
+        self.file = self.root / (self.FILENAME if lighting == "above_horizon"
+                                 else "gate_active_mask_vertical_night_v1.model")
+        self._night_probe = GateShapeProbe(self.root) if lighting == "below_horizon" else None
         self.model = None
         self._last_error = "NOT_INITIALIZED"
 
@@ -55,7 +58,20 @@ class GateShadow:
 
     def _fit(self, dataset):
         # No fitting if the historical candidate has not passed event holdout.
-        report = dataset.shape_benchmark()
+        from ha_gate_dataset import ROI
+        rows = [r for _, r in dataset.entries() if
+                r.get("verified") and r.get("roi") == list(ROI)
+                and r.get("label") in ("OPEN", "CLOSED")]
+        if self._night_probe is not None:
+            rows = [r for r in rows if r.get("sun") == "below_horizon"]
+            report = self._night_probe.evaluate(rows)
+            # Validate this exact feature model, not a different winning candidate.
+            candidate = report.get("candidate_scores", {}).get("mask_vertical", {})
+            report = dict(report, model="mask_vertical",
+                          open_recall_pct=candidate.get("open_recall_pct", 0),
+                          closed_recall_pct=candidate.get("closed_recall_pct", 0))
+        else:
+            report = dataset.shape_benchmark()
         if (report.get("status") != "CANDIDATE_PASSED" or
                 report.get("model") != "mask_vertical" or
                 report.get("split") != "event_holdout" or
@@ -63,10 +79,6 @@ class GateShadow:
                 report.get("closed_recall_pct", 0) < 90):
             self._last_error = "BASELINE_NOT_ELIGIBLE"
             return None
-        from ha_gate_dataset import ROI
-        rows = [r for _, r in dataset.entries() if
-                r.get("verified") and r.get("roi") == list(ROI)
-                and r.get("label") in ("OPEN", "CLOSED")]
         train = {}
         for label in ("OPEN", "CLOSED"):
             values = [r for r in rows if r["label"] == label]
@@ -123,7 +135,7 @@ class GateShadow:
         return self._load()
 
     def predict(self, cropped, dataset, sun="above_horizon"):
-        if sun != "above_horizon":
+        if sun != self.lighting:
             return {"prediction": "UNKNOWN", "reason": "NIGHT_OR_UNKNOWN_LIGHT",
                     "model_id": "none"}
         try:
@@ -139,8 +151,8 @@ class GateShadow:
             vector = _extract_all(cropped)["mask_vertical"]
             means = model["means"]
             weights = {int(k): v for k, v in model["weights"].items()}
-            predicted = _mask_prediction(vector, (means, weights))
-            return {"prediction": predicted,
+            predicted, margin = _mask_score(vector, (means, weights))
+            return {"prediction": predicted, "margin": margin,
                     "reason": ("SHADOW_ONLY" if predicted != "UNKNOWN" else "LOW_CONFIDENCE"),
                     "model_id": model["id"]}
         except (OSError, ValueError, TypeError, KeyError, IndexError):

@@ -119,9 +119,19 @@ class HomeTools:
             if len(missing)>6: out += f" (+{len(missing)-6} lagi)"
         return out + "\nNota: Entity tersedia tidak menjamin RTSP/stream sedang berfungsi."
 
+    async def gate_summary_live(self, session, states):
+        advisor = getattr(self, "gate_advisor", None)
+        if advisor is not None:
+            try:
+                advisor.latest, margin = await advisor._visual(session, states)
+                await advisor.publish_dashboard(session, margin)
+            except Exception:
+                advisor.latest = "UNKNOWN"
+        return self.gate_summary(states)
+
     def gate_summary(self, states):
         advisor = getattr(self, "gate_advisor", None)
-        visual = ("📷 Visual gate (POC): " + advisor.latest + "\n"
+        visual = ("📷 Visual gate (anggaran CCTV): " + advisor.latest + "\n"
                   if advisor is not None else "📷 Visual gate: belum tersedia\n")
         gates = self.gate_items(states)
         learning = ("\n" + advisor.dataset.summary()) if advisor is not None else ""
@@ -463,7 +473,7 @@ class HomeTools:
             try: return self.light_summary(await self.states(session))
             except Exception: return "Tak dapat baca lampu HA live."
         if re.search(r"\b(gate|autogate|pagar)\b",lower) and re.search(r"\b(status|keadaan|tutup|buka)\b",lower):
-            try: return self.gate_summary(await self.states(session))
+            try: return await self.gate_summary_live(session, await self.states(session))
             except Exception: return "Tidak dapat baca status gate HA."
         m=re.match(r"^(?:(?:apa|bagaimana|boleh semak|tolong semak|check)\s+)?(?:status|keadaan|bacaan|state|nilai)\s+(.+?)\s*[?.!]*$",lower)
         if m:
@@ -478,6 +488,8 @@ class HomeTools:
         if kind:
             try: states=await self.states(session)
             except Exception: return "Maaf, HA Core tak dapat berikan bacaan live sekarang."
+            if kind == "gate":
+                return await self.gate_summary_live(session, states)
             return {"home":self.summary,"metrics":self.metrics,"camera":self.camera_summary,
                     "gate":self.gate_summary,"lights":self.light_summary}[kind](states)
         return None

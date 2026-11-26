@@ -68,6 +68,7 @@ class GateDataset:
         self._evaluation_cache = None
         self._shape_probe = None
         self._shadow_probe = None
+        self._night_active_probe = None
         if self.enabled:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             self.root.chmod(0o700)
@@ -479,6 +480,34 @@ class GateDataset:
         except (OSError, ValueError, TypeError, KeyError, ImportError):
             return {"status": "SHADOW_STATS_ERROR", "accuracy_pct": None,
                     "model_id": "none", "ready_for_manual_review": False}
+
+    def active_classify(self, jpeg, sun):
+        """Use the existing validated structure model directly; no shadow-label gate."""
+        diagnostic = {"reason": "DATASET_DISABLED", "model": "none",
+                      "similarity": 0.0, "model_id": "none", "lighting": sun}
+        if not self.enabled:
+            return "UNKNOWN", 0.0, diagnostic
+        if sun not in ("above_horizon", "below_horizon"):
+            return "UNKNOWN", 0.0, dict(diagnostic, reason="LIGHT_STATE_UNKNOWN")
+        try:
+            cropped, _ = feature(jpeg)
+            if sun == "below_horizon":
+                from ha_gate_shadow import GateShadow
+                if self._night_active_probe is None:
+                    self._night_active_probe = GateShadow(self.root, lighting=sun)
+                predictor = self._night_active_probe
+            else:
+                predictor = self._shadow()
+            result = predictor.predict(cropped, self, sun)
+            state = result.get("prediction", "UNKNOWN")
+            model_id = result.get("model_id", "none")
+            model = "mask_vertical_night" if sun == "below_horizon" else "mask_vertical"
+            reason = ("STRUCTURE_CONFIDENT" if state in ("OPEN", "CLOSED")
+                      else result.get("reason", "LOW_CONFIDENCE"))
+            return state, result.get("margin", 0.0), dict(
+                diagnostic, reason=reason, model=model, model_id=model_id)
+        except (OSError, ValueError, TypeError, KeyError, ImportError):
+            return "UNKNOWN", 0.0, dict(diagnostic, reason="INVALID_CAMERA_FRAME")
 
     def classify_diagnostic(self, jpeg):
         """Return label, margin and sanitized reason. No pictures or locations."""
