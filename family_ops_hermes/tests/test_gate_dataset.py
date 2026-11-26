@@ -77,6 +77,23 @@ class DatasetTests(unittest.TestCase):
             self.assertEqual(store.stats()["open"], 0)
             self.assertEqual(store.stats()["closed"], 0)
 
+    def test_review_prioritizes_shadow_evidence_without_prediction_leak(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            with patch.object(store, "shadow_predict_crop", return_value={
+                    "prediction": "OPEN", "model_id": "abcdef123456"}):
+                eligible = store.save(jpeg(), sun="above_horizon", return_id=True)
+            newer = store.save(jpeg(), sun="below_horizon", return_id=True)
+            with patch.object(store, "shadow_stats", return_value={"model_id": "abcdef123456"}):
+                queue = store.review_queue()
+                self.assertEqual(queue[0]["id"], eligible)
+                self.assertTrue(queue[0]["shadow_evidence"])
+                self.assertEqual(queue[1]["id"], newer)
+                self.assertFalse(queue[1]["shadow_evidence"])
+                self.assertNotIn("shadow_prediction", queue[0])
+                self.assertNotIn("shadow_model_id", queue[0])
+                self.assertEqual(store.review_queue(1)[0]["id"], newer)
+
     def test_owner_verified_distinct_from_unverified(self):
         with tempfile.TemporaryDirectory() as temp:
             store = GateDataset(enabled=True, root=temp)
