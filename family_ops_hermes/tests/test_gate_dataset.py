@@ -77,6 +77,23 @@ class DatasetTests(unittest.TestCase):
             self.assertEqual(store.stats()["open"], 0)
             self.assertEqual(store.stats()["closed"], 0)
 
+    def test_review_prioritizes_shadow_evidence_without_prediction_leak(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            with patch.object(store, "shadow_predict_crop", return_value={
+                    "prediction": "OPEN", "model_id": "abcdef123456"}):
+                eligible = store.save(jpeg(), sun="above_horizon", return_id=True)
+            newer = store.save(jpeg(), sun="below_horizon", return_id=True)
+            with patch.object(store, "shadow_stats", return_value={"model_id": "abcdef123456"}):
+                queue = store.review_queue()
+                self.assertEqual(queue[0]["id"], eligible)
+                self.assertTrue(queue[0]["shadow_evidence"])
+                self.assertEqual(queue[1]["id"], newer)
+                self.assertFalse(queue[1]["shadow_evidence"])
+                self.assertNotIn("shadow_prediction", queue[0])
+                self.assertNotIn("shadow_model_id", queue[0])
+                self.assertEqual(store.review_queue(1)[0]["id"], newer)
+
     def test_owner_verified_distinct_from_unverified(self):
         with tempfile.TemporaryDirectory() as temp:
             store = GateDataset(enabled=True, root=temp)
@@ -159,6 +176,56 @@ class DatasetTests(unittest.TestCase):
         for word in ("/services/switch", "switch.bothgate", "turn_on", "turn_off",
                      "github.com", "api.telegram.org"):
             self.assertNotIn(word, source)
+
+
+
+class OwnerConfirmTests(unittest.IsolatedAsyncioTestCase):
+    async def test_confirmed_capture_preserves_sun_and_prelabel_shadow(self):
+        from unittest.mock import AsyncMock, MagicMock
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            camera = MagicMock()
+            camera.status = 200
+            camera.read = AsyncMock(return_value=jpeg())
+            sun = MagicMock()
+            sun.status = 200
+            sun.json = AsyncMock(return_value={"state": "above_horizon"})
+            def context(response):
+                cm = MagicMock()
+                cm.__aenter__ = AsyncMock(return_value=response)
+                cm.__aexit__ = AsyncMock(return_value=False)
+                return cm
+            session = MagicMock()
+            session.get.side_effect = [context(camera), context(sun)]
+            with patch.object(store, "shadow_predict_crop", return_value={
+                    "prediction": "OPEN", "model_id": "abcdef123456"}) as predict:
+                await store.owner_confirm(session, "OPEN", "http://ha", {})
+                predict.assert_called_once()
+                self.assertEqual(predict.call_args.args[1], "above_horizon")
+            row = store.entries()[0][1]
+            self.assertEqual(row["sun"], "above_horizon")
+            self.assertTrue(row["verified"])
+            self.assertEqual(row["shadow_model_id"], "abcdef123456")
+            self.assertEqual(row["shadow_prediction"], "OPEN")
+
+    async def test_sun_failure_still_saves_owner_label(self):
+        from unittest.mock import AsyncMock, MagicMock
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            camera = MagicMock()
+            camera.status = 200
+            camera.read = AsyncMock(return_value=jpeg())
+            cm = MagicMock()
+            cm.__aenter__ = AsyncMock(return_value=camera)
+            cm.__aexit__ = AsyncMock(return_value=False)
+            session = MagicMock()
+            session.get.side_effect = [cm, TimeoutError()]
+            await store.owner_confirm(session, "CLOSED", "http://ha", {})
+            row = store.entries()[0][1]
+            self.assertEqual(row["sun"], "unknown")
+            self.assertEqual(row["label"], "CLOSED")
+            self.assertTrue(row["verified"])
+            self.assertEqual(row["shadow_prediction"], "UNKNOWN")
 
 
 if __name__ == "__main__":

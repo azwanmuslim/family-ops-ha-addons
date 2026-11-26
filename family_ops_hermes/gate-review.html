@@ -94,7 +94,8 @@ function show(){
  const when=new Date(active.timestamp*1000);
  el("info").textContent=when.toLocaleString("ms-MY",{timeZone:"Asia/Kuala_Lumpur",
    year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})+
-   " (Malaysia) · "+(active.sun==="above_horizon"?"Siang":"Malam/gelap");
+   " (Malaysia) · "+(active.sun==="above_horizon"?"Siang":"Malam/gelap")+
+   (active.shadow_evidence?" · Sampel validation shadow":"");
  photo.src="api/photo/"+encodeURIComponent(active.id);
 }
 async function reload(focusId=null){
