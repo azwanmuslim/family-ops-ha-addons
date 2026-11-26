@@ -231,11 +231,17 @@ class GateDataset:
         """Only NEW ROI images, not already labelled or obsolete training crops."""
         if not self.enabled:
             return []
+        model_id = self.shadow_stats().get("model_id", "none")
         todo = [
             {
                 "id": row["id"],
                 "timestamp": float(row["timestamp"]),
                 "sun": str(row.get("sun", "unknown"))[:24],
+                # Prioritize evidence without revealing the model prediction.
+                "shadow_evidence": (model_id != "none"
+                                    and row.get("shadow_model_id") == model_id
+                                    and row.get("shadow_prediction") in ("OPEN", "CLOSED", "UNKNOWN")
+                                    and row.get("sun") == "above_horizon"),
             }
             for _, row in self.entries()
             if row.get("roi") == list(ROI)
@@ -243,7 +249,11 @@ class GateDataset:
             and not row.get("verified", False)
         ]
         todo.sort(key=lambda r: r["timestamp"], reverse=True)
-        return todo[:max(1, min(int(limit), 120))]
+        # Keep the newest bounded window so a new on-demand snapshot is
+        # always present; show eligible shadow evidence first within it.
+        recent = todo[:max(1, min(int(limit), 120))]
+        recent.sort(key=lambda r: r["shadow_evidence"], reverse=True)
+        return recent
 
     def review_photo(self, sample_id):
         """Return only the existing CROPPED image for current-ROI review."""
