@@ -111,10 +111,11 @@ def _mask_prototypes(by_label):
     return mean, weights
 
 
-def _mask_prediction(sample, prototypes):
+def _mask_score(sample, prototypes):
+    """Label plus actual distance margin; no forced binary guess."""
     means, weights = prototypes
     if not weights:
-        return "UNKNOWN"
+        return "UNKNOWN", 0.0
     distance = {
         label: sum(w * abs(sample[i] - center[i]) for i, w in weights.items())
         / max(1e-9, sum(weights.values()))
@@ -124,7 +125,12 @@ def _mask_prediction(sample, prototypes):
     loser = "CLOSED" if winner == "OPEN" else "OPEN"
     margin = (distance[loser] - distance[winner]) / max(
         1e-8, distance[loser] + distance[winner])
-    return winner if margin >= .08 and distance[winner] <= .34 else "UNKNOWN"
+    return (winner if margin >= .08 and distance[winner] <= .34 else "UNKNOWN",
+            round(margin, 3))
+
+
+def _mask_prediction(sample, prototypes):
+    return _mask_score(sample, prototypes)[0]
 
 
 def _sessions(rows, gap_seconds=900):

@@ -136,5 +136,44 @@ class GateAdvisorTests(unittest.TestCase):
         self.assertNotIn("turn_off", body)
 
 
+class ActiveVisionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_sensor_uses_structure_not_legacy_or_shadow_validation(self):
+        from unittest.mock import MagicMock, AsyncMock
+        advisor = GateAdvisor(lambda *_: None)
+        advisor.dataset = MagicMock()
+        advisor.dataset.due.return_value = False
+        response = MagicMock()
+        response.status = 200
+        response.read = AsyncMock(return_value=b"jpeg")
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=response)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        session = MagicMock()
+        session.get.return_value = cm
+        from ha_gate_advisor import CAMERA
+        states = {CAMERA: {"state": "idle"}, "sun.sun": {"state": "above_horizon"}}
+        for label in ("OPEN", "CLOSED", "UNKNOWN"):
+            advisor.dataset.active_classify.return_value = (
+                label, .4, {"reason": "STRUCTURE_CONFIDENT", "model_id": "test"})
+            self.assertEqual(await advisor._visual(session, states), (label, .4))
+        advisor.dataset.classify_diagnostic.assert_not_called()
+        advisor.dataset.shadow_stats.assert_not_called()
+
+    def test_active_model_reuses_frozen_prediction_and_rejects_bad_frame(self):
+        import tempfile
+        from unittest.mock import patch
+        from ha_gate_dataset import GateDataset
+        from test_gate_structure import frame
+        with tempfile.TemporaryDirectory() as folder:
+            store = GateDataset(enabled=True, root=folder)
+            with patch.object(store._shadow(), "predict", return_value={
+                    "prediction": "OPEN", "margin": .42, "model_id": "abcdef123456"}):
+                result = store.active_classify(frame(True), "above_horizon")
+                self.assertEqual(result[:2], ("OPEN", .42))
+                self.assertEqual(result[2]["reason"], "STRUCTURE_CONFIDENT")
+                self.assertEqual(store.active_classify(b"bad", "above_horizon")[0], "UNKNOWN")
+            self.assertEqual(store.active_classify(frame(True), "below_horizon")[0], "UNKNOWN")
+
+
 if __name__ == "__main__":
     unittest.main()
