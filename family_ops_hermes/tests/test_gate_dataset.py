@@ -161,5 +161,55 @@ class DatasetTests(unittest.TestCase):
             self.assertNotIn(word, source)
 
 
+
+class OwnerConfirmTests(unittest.IsolatedAsyncioTestCase):
+    async def test_confirmed_capture_preserves_sun_and_prelabel_shadow(self):
+        from unittest.mock import AsyncMock, MagicMock
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            camera = MagicMock()
+            camera.status = 200
+            camera.read = AsyncMock(return_value=jpeg())
+            sun = MagicMock()
+            sun.status = 200
+            sun.json = AsyncMock(return_value={"state": "above_horizon"})
+            def context(response):
+                cm = MagicMock()
+                cm.__aenter__ = AsyncMock(return_value=response)
+                cm.__aexit__ = AsyncMock(return_value=False)
+                return cm
+            session = MagicMock()
+            session.get.side_effect = [context(camera), context(sun)]
+            with patch.object(store, "shadow_predict_crop", return_value={
+                    "prediction": "OPEN", "model_id": "abcdef123456"}) as predict:
+                await store.owner_confirm(session, "OPEN", "http://ha", {})
+                predict.assert_called_once()
+                self.assertEqual(predict.call_args.args[1], "above_horizon")
+            row = store.entries()[0][1]
+            self.assertEqual(row["sun"], "above_horizon")
+            self.assertTrue(row["verified"])
+            self.assertEqual(row["shadow_model_id"], "abcdef123456")
+            self.assertEqual(row["shadow_prediction"], "OPEN")
+
+    async def test_sun_failure_still_saves_owner_label(self):
+        from unittest.mock import AsyncMock, MagicMock
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            camera = MagicMock()
+            camera.status = 200
+            camera.read = AsyncMock(return_value=jpeg())
+            cm = MagicMock()
+            cm.__aenter__ = AsyncMock(return_value=camera)
+            cm.__aexit__ = AsyncMock(return_value=False)
+            session = MagicMock()
+            session.get.side_effect = [cm, TimeoutError()]
+            await store.owner_confirm(session, "CLOSED", "http://ha", {})
+            row = store.entries()[0][1]
+            self.assertEqual(row["sun"], "unknown")
+            self.assertEqual(row["label"], "CLOSED")
+            self.assertTrue(row["verified"])
+            self.assertEqual(row["shadow_prediction"], "UNKNOWN")
+
+
 if __name__ == "__main__":
     unittest.main()
