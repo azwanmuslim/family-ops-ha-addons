@@ -4,6 +4,11 @@ on:
     paths:
       - 'family_ops_hermes/**'
       - '.github/workflows/hermes-static-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'family_ops_hermes/**'
+      - '.github/workflows/hermes-static-ci.yml'
   workflow_dispatch:
 jobs:
   verify:
