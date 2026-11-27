@@ -75,7 +75,7 @@ class GateDataset:
             self.prune()
 
     def due(self):
-        return self.enabled and (self.last_routine is None or time.monotonic() - self.last_routine >= INTERVAL)
+        return False  # Periodic training storage paused; live inference remains enabled.
 
     def entries(self):
         if not self.enabled:
@@ -215,7 +215,7 @@ class GateDataset:
         s = self.stats()
         if not s["enabled"]:
             return "📚 Gate learning: OFF"
-        return (f"📚 Gate learning: setiap 30 minit; 14 hari lokal\n"
+        return (f"📚 Gate learning: snapshot manual; 14 hari lokal\n"
                 f"Sampel: {s['samples']} | OPEN disahkan: {s['open']} | "
                 f"CLOSED disahkan: {s['closed']} | Belum disahkan: {s['unverified']}\n"
                 f"Model: {'boleh dinilai' if s['open'] >= 6 and s['closed'] >= 6 else 'belum cukup sampel disahkan'}\n"
@@ -256,7 +256,15 @@ class GateDataset:
         recent.sort(key=lambda r: r["shadow_evidence"], reverse=True)
         return recent
 
-    def review_photo(self, sample_id):
+    def labelled_queue(self, label=None, offset=0, limit=120):
+        rows = [{"id": r["id"], "timestamp": r["timestamp"], "sun": r.get("sun", "unknown"),
+                 "label": r["label"]} for _, r in reversed(self.entries())
+                if r.get("roi") == list(ROI) and r.get("verified")
+                and r.get("label") in ("OPEN", "CLOSED")
+                and (label is None or r["label"] == label)]
+        return rows[offset:offset+limit], len(rows)
+
+    def review_photo(self, sample_id, reviewed=False):
         """Return only the existing CROPPED image for current-ROI review."""
         if not self.enabled or not self._valid_sample_id(sample_id):
             raise ValueError("invalid_sample")
@@ -265,8 +273,9 @@ class GateDataset:
         try:
             row = json.loads(meta.read_text(encoding="utf-8"))
             if (row.get("id") != sample_id or row.get("roi") != list(ROI)
-                    or row.get("label") != "UNKNOWN"
-                    or row.get("verified") or not photo.is_file()):
+                    or (bool(row.get("verified")) != reviewed)
+                    or (row.get("label") not in ("OPEN", "CLOSED") if reviewed else row.get("label") != "UNKNOWN")
+                    or not photo.is_file()):
                 raise ValueError("sample_not_reviewable")
             data = photo.read_bytes()
             if not data.startswith(b"\xff\xd8") or len(data) > 1_500_000:
@@ -275,11 +284,11 @@ class GateDataset:
         except FileNotFoundError as exc:
             raise ValueError("sample_expired") from exc
 
-    def confirm_existing(self, sample_id, label):
+    def confirm_existing(self, sample_id, label, expected=None):
         """Atomically label exactly one saved image; no camera snapshot or gate call."""
         if not self.enabled or not self._valid_sample_id(sample_id):
             raise ValueError("invalid_sample")
-        if label not in ("OPEN", "CLOSED"):
+        if label not in ("OPEN", "CLOSED", "UNKNOWN") or (expected is None and label == "UNKNOWN"):
             raise ValueError("invalid_label")
         meta = self.root / (sample_id + ".json")
         photo = self.root / (sample_id + ".jpg")
@@ -288,15 +297,23 @@ class GateDataset:
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError("sample_not_found") from exc
         if (row.get("id") != sample_id or row.get("roi") != list(ROI)
-                or row.get("label") != "UNKNOWN" or row.get("verified")
+                or (row.get("label") != (expected or "UNKNOWN"))
+                or (bool(row.get("verified")) != (expected is not None))
                 or not photo.is_file()):
             raise ValueError("sample_already_reviewed_or_old_crop")
         if float(row.get("timestamp", 0)) < time.time() - RETENTION:
             raise ValueError("sample_expired")
+        if expected is not None:
+            if expected not in ("OPEN", "CLOSED") or expected == label:
+                raise ValueError("invalid_correction")
+            row.setdefault("label_history", []).append({"label": expected, "corrected_at_utc": dt.datetime.now(dt.timezone.utc).isoformat()})
+            # A persistent revision prevents both processes using a frozen model trained on wrong labels.
+            # Write the revision before the row and again after it, so an interrupted correction fails safe.
+            self._bump_revision()
         row.update({
             "label": label,
-            "verified": True,
-            "source": "owner_review",
+            "verified": label != "UNKNOWN",
+            "source": "owner_correction" if expected is not None else "owner_review",
             "verified_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         })
         temporary = self.root / ("." + sample_id + "-" + secrets.token_hex(4) + ".tmp")
@@ -309,7 +326,22 @@ class GateDataset:
             os.replace(temporary, meta)
         finally:
             temporary.unlink(missing_ok=True)
+        if expected is not None:
+            self._bump_revision()
         return True
+
+    def _bump_revision(self):
+        marker = self.root / ".label_revision"
+        temp = self.root / (".revision-" + secrets.token_hex(8))
+        try:
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                stream.write(secrets.token_hex(12))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, marker)
+        finally:
+            temp.unlink(missing_ok=True)
 
     def _focused_vector(self, crop_jpeg):
         """Upper gate band from the existing stored ROI crop; exclude parked car below.

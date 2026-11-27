@@ -68,6 +68,21 @@ class GateReviewTests(unittest.IsolatedAsyncioTestCase):
             headers={"X-Gate-Review-CSRF": data["csrf"]})
         self.assertEqual(second.status, 409)
 
+    async def test_review_correction_and_stale_label(self):
+        token = (await (await self.client.get("/api/list")).json())["csrf"]
+        headers = {"X-Gate-Review-CSRF": token}
+        await self.client.post("/api/label", json={"id": self.sample, "label": "OPEN"}, headers=headers)
+        listing = await (await self.client.get("/api/list?mode=OPEN")).json()
+        self.assertEqual(listing["samples"][0]["label"], "OPEN")
+        self.assertEqual((await self.client.get("/api/photo/" + self.sample + "?reviewed=1")).status, 200)
+        payload = {"id": self.sample, "label": "CLOSED", "expected": "OPEN"}
+        self.assertEqual((await self.client.post("/api/label", json=payload, headers=headers)).status, 200)
+        self.assertEqual(self.dataset.stats()["closed"], 1)
+        self.assertTrue((Path(self.temp.name) / ".label_revision").exists())
+        self.assertEqual((await self.client.post("/api/label", json=payload, headers=headers)).status, 409)
+        self.assertEqual((await self.client.post("/api/label", json={"id": self.sample, "label": "UNKNOWN", "expected": "CLOSED"}, headers=headers)).status, 200)
+        self.assertEqual(self.dataset.stats()["unverified"], 1)
+
     async def test_on_demand_capture_creates_unverified_image_then_labels(self):
         token = (await (await self.client.get("/api/list")).json())["csrf"]
         denied = await self.client.post("/api/capture")

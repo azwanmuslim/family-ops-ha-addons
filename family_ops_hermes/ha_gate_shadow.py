@@ -22,13 +22,28 @@ class GateShadow:
     def __init__(self, root, lighting="above_horizon"):
         self.root = Path(root)
         self.lighting = lighting
-        self.file = self.root / (self.FILENAME if lighting == "above_horizon"
+        self.base_file = self.root / (self.FILENAME if lighting == "above_horizon"
                                  else "gate_active_mask_vertical_night_v1.model")
+        self.file = self.base_file
         self._night_probe = GateShapeProbe(self.root) if lighting == "below_horizon" else None
         self.model = None
         self._last_error = "NOT_INITIALIZED"
 
+    def _revision_file(self):
+        marker = self.root / ".label_revision"
+        try:
+            revision = marker.read_text().strip()
+        except FileNotFoundError:
+            return self.base_file
+        if len(revision) != 24 or any(c not in "0123456789abcdef" for c in revision):
+            raise ValueError("invalid_label_revision")
+        return self.base_file.with_name(self.base_file.stem + "-" + revision + ".model")
+
     def _load(self):
+        target = self._revision_file()
+        if target != self.file:
+            self.file = target
+            self.model = None
         if self.model is not None:
             return self.model
         if not self.file.is_file():
@@ -58,6 +73,7 @@ class GateShadow:
 
     def _fit(self, dataset):
         # No fitting if the historical candidate has not passed event holdout.
+        target = self.file
         from ha_gate_dataset import ROI
         rows = [r for _, r in dataset.entries() if
                 r.get("verified") and r.get("roi") == list(ROI)
@@ -126,7 +142,9 @@ class GateShadow:
                 stream.flush()
                 os.fsync(stream.fileno())
             try:
-                os.link(tmp, self.file)  # Atomic create if absent; no overwrite.
+                if target != self._revision_file():
+                    return None
+                os.link(tmp, target)  # Atomic create if absent; no overwrite.
             except FileExistsError:
                 pass
         finally:
@@ -152,6 +170,8 @@ class GateShadow:
             means = model["means"]
             weights = {int(k): v for k, v in model["weights"].items()}
             predicted, margin = _mask_score(vector, (means, weights))
+            if self.file != self._revision_file():
+                return {"prediction": "UNKNOWN", "reason": "LABELS_CHANGED", "model_id": "none"}
             return {"prediction": predicted, "margin": margin,
                     "reason": ("SHADOW_ONLY" if predicted != "UNKNOWN" else "LOW_CONFIDENCE"),
                     "model_id": model["id"]}

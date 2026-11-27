@@ -139,7 +139,8 @@ class GateAdvisor:
                 "attributes": {
                     "friendly_name": "Hermes Gate Learning",
                     "icon": "mdi:brain",
-                    "capture_interval_minutes": 30,
+                    "capture_interval_minutes": 0,
+                    "periodic_capture_enabled": False,
                     "retention_days": 14,
                     "mode": "suggestion_only",
                     "model_accuracy_verified": False,  # Holdout POC != field safety validation.

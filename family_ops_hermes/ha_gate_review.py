@@ -77,6 +77,14 @@ def create_app(dataset=None, capture_frame=None):
 
     async def listing(request):
         stats = dataset.stats()
+        mode = request.query.get("mode", "pending")
+        if mode not in ("pending", "all", "OPEN", "CLOSED"):
+            raise web.HTTPBadRequest()
+        try:
+            offset = max(0, int(request.query.get("offset", "0")))
+        except ValueError:
+            raise web.HTTPBadRequest() from None
+        samples, total = (dataset.review_queue(120), stats["unverified"]) if mode == "pending" else dataset.labelled_queue(None if mode == "all" else mode, offset)
         return web.json_response(
             {
                 "enabled": dataset.enabled,
@@ -86,7 +94,8 @@ def create_app(dataset=None, capture_frame=None):
                     "closed": stats["closed"],
                     "legacy": stats.get("legacy_samples", 0),
                 },
-                "samples": dataset.review_queue(120),
+                "samples": samples,
+                "total": total,
                 "csrf": csrf,
                 "scope": "manual_labels_only",
             },
@@ -96,7 +105,7 @@ def create_app(dataset=None, capture_frame=None):
     async def photo(request):
         sid = request.match_info["sample_id"]
         try:
-            jpeg = dataset.review_photo(sid)
+            jpeg = dataset.review_photo(sid, reviewed=request.query.get("reviewed") == "1")
         except (ValueError, OSError):
             raise web.HTTPNotFound(text="Gambar tiada atau sudah disahkan") from None
         return web.Response(body=jpeg, content_type="image/jpeg", headers={
@@ -114,14 +123,17 @@ def create_app(dataset=None, capture_frame=None):
             payload = await request.json()
         except (ValueError, json.JSONDecodeError):
             raise web.HTTPBadRequest(text="JSON tidak sah") from None
-        if not isinstance(payload, dict) or set(payload) != {"id", "label"}:
+        if not isinstance(payload, dict) or set(payload) not in ({"id", "label"}, {"id", "label", "expected"}):
             raise web.HTTPBadRequest(text="Permintaan tidak sah")
         sid, value = payload["id"], payload["label"]
-        if not isinstance(sid, str) or value not in ("OPEN", "CLOSED"):
+        expected = payload.get("expected")
+        if (not isinstance(sid, str) or value not in ("OPEN", "CLOSED", "UNKNOWN")
+                or ("expected" in payload and expected not in ("OPEN", "CLOSED"))
+                or (expected is None and value == "UNKNOWN")):
             raise web.HTTPBadRequest(text="Label mesti OPEN atau CLOSED")
         async with app["label_lock"]:
             try:
-                dataset.confirm_existing(sid, value)
+                dataset.confirm_existing(sid, value, expected=expected)
             except ValueError:
                 raise web.HTTPConflict(text="Sampel sudah disahkan, luput, atau crop lama") from None
         return web.json_response({"ok": True, "label": value},
