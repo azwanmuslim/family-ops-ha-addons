@@ -50,7 +50,9 @@ class DatasetTests(unittest.TestCase):
     def test_routine_has_unknown_label_and_throttle(self):
         with tempfile.TemporaryDirectory() as temp:
             store = GateDataset(enabled=True, root=temp)
-            self.assertTrue(store.capture_routine(jpeg(), "above_horizon"))
+            self.assertFalse(store.capture_routine(jpeg(), "above_horizon"))
+            self.assertEqual(store.stats()["samples"], 0)
+            store.save(jpeg(), source="manual_request", sun="above_horizon")
             self.assertFalse(store.capture_routine(jpeg(), "above_horizon"))
             stats = store.stats()
             self.assertEqual(stats["samples"], 1)
@@ -72,7 +74,7 @@ class DatasetTests(unittest.TestCase):
                              sun="above_horizon", return_id=True)
             self.assertRegex(sid, r"^[0-9]{8}T[0-9]{6}-[a-f0-9]{8}$")
             self.assertEqual(store.review_queue()[0]["id"], sid)
-            self.assertTrue(store.due())
+            self.assertFalse(store.due())
             self.assertEqual(store.stats()["unverified"], 1)
             self.assertEqual(store.stats()["open"], 0)
             self.assertEqual(store.stats()["closed"], 0)

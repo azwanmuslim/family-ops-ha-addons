@@ -54,19 +54,20 @@ a{color:#8bdbff}
       <strong id="position">Memuatkan gambar…</strong>
       <button class="skip" style="max-width:112px;padding:8px" id="refresh" type="button">Refresh</button>
     </div>
+    <div class="actions"><select id="mode" aria-label="Filter label"><option value="pending">Belum disahkan</option><option value="all">Review semua label</option><option value="OPEN">Review OPEN</option><option value="CLOSED">Review CLOSED</option></select><button class="skip" id="prevPage">Halaman lalu</button><button class="skip" id="nextPage">Halaman seterusnya</button></div>
     <p id="info" class="muted"></p>
     <img id="photo" alt="Gambar kawasan pagar yang disimpan oleh Hermes" hidden>
     <div class="actions" id="controls" hidden>
       <button type="button" id="markOpen" class="open">✓ OPEN</button>
       <button type="button" id="markClosed" class="closed">✓ CLOSED</button>
-      <button type="button" id="skip" class="skip">SKIP</button>
+      <button type="button" id="clearLabel" class="skip" hidden>Buang label</button><button type="button" id="skip" class="skip">NEXT / SKIP</button>
     </div>
     <div role="status" aria-live="polite" id="message"></div>
     <p class="muted">Bila gambar gelap, kereta menghalang atau gate sedang bergerak, tekan SKIP. Jangan teka.</p>
   </section>
   <section class="panel">
     <div class="notice">Gambar crop lama yang tidak menunjukkan gate tidak digunakan untuk belajar. <strong id="legacy">0</strong> sampel lama diasingkan.</div>
-    <p class="muted" style="margin-top:12px">Capture automatik setiap 30 minit + snapshot manual bila perlu. Simpan maksimum 14 hari. Tiada kawalan motor pagar atau penghantaran gambar ke cloud.</p>
+    <p class="muted" style="margin-top:12px">Capture training automatik dihentikan; snapshot manual bila perlu. Analisis visual langsung kekal. Simpan maksimum 14 hari. Tiada kawalan motor pagar atau penghantaran gambar ke cloud.</p>
     <p><a href="../">Kembali ke Hermes</a></p>
   </section>
 </main>
@@ -74,20 +75,21 @@ a{color:#8bdbff}
 "use strict";
 const el=id=>document.getElementById(id);
 const photo=el("photo");
-let items=[], index=0, csrf="", busy=false;
+let items=[], index=0, csrf="", busy=false, offset=0, total=0;
 function setBusy(on){
  busy=on;
- for(const id of ["markOpen","markClosed","skip","refresh","capture"])el(id).disabled=on;
+ for(const id of ["markOpen","markClosed","skip","refresh","capture","clearLabel","mode","prevPage","nextPage"])el(id).disabled=on;
 }
 function show(){
  const active=items[index];
  const has=!!active;
  el("controls").hidden=!has;
  photo.hidden=!has;
+ el("clearLabel").hidden=!has||!active.label;
  if(!has){
   photo.removeAttribute("src");
   el("position").textContent="Tiada lagi gambar untuk disahkan 🎉";
-  el("info").textContent="Hermes akan tambah gambar selepas capture seterusnya.";
+  el("info").textContent="Pilih filter lain atau Snapshot Now untuk gambar baharu.";
   return;
  }
  el("position").textContent="Gambar "+(index+1)+" / "+items.length;
@@ -96,18 +98,20 @@ function show(){
    year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})+
    " (Malaysia) · "+(active.sun==="above_horizon"?"Siang":"Malam/gelap")+
    (active.shadow_evidence?" · Sampel validation shadow":"");
- photo.src="api/photo/"+encodeURIComponent(active.id);
+ if(active.label)el("info").textContent+=" · Label asal: "+active.label;
+ photo.src="api/photo/"+encodeURIComponent(active.id)+(active.label?"?reviewed=1":"");
 }
 async function reload(focusId=null){
  if(busy)return;
  setBusy(true);
  el("message").textContent="";
  try{
-  const r=await fetch("api/list",{credentials:"same-origin",cache:"no-store"});
+  const r=await fetch("api/list?mode="+encodeURIComponent(el("mode").value)+"&offset="+offset,{credentials:"same-origin",cache:"no-store"});
   if(!r.ok)throw Error("Gagal dapatkan senarai gambar");
   const j=await r.json();
   csrf=j.csrf;
   items=j.samples||[];
+  total=j.total||0;
   index=Math.max(0,items.findIndex(sample=>sample.id===focusId));
   el("pending").textContent=j.counts.pending;
   el("openCount").textContent=j.counts.open;
@@ -131,6 +135,7 @@ async function capture(){
   const data=await r.json().catch(()=>({}));
   if(!r.ok)throw Error(data.error||"Snapshot gagal ("+r.status+").");
   setBusy(false);
+  el("mode").value="pending";offset=0;
   if(await reload(data.id)){
    el("message").textContent="✅ Snapshot baharu disimpan. Semak gambar kemudian tekan OPEN atau CLOSED.";
   }
@@ -142,19 +147,18 @@ async function submit(label){
  setBusy(true);
  el("message").textContent="Menyimpan label…";
  try{
-  const sid=items[index].id;
+  const active=items[index];
+  const sid=active.id;
+  if(active.label===label){el("message").textContent="Label asal sudah betul.";return;}
+  const body={id:sid,label};if(active.label)body.expected=active.label;
   const r=await fetch("api/label",{
    method:"POST",credentials:"same-origin",
    headers:{"Content-Type":"application/json","X-Gate-Review-CSRF":csrf},
-   body:JSON.stringify({id:sid,label})
+   body:JSON.stringify(body)
   });
   if(!r.ok)throw Error("Gagal simpan label ("+r.status+"). Cuba Refresh.");
-  items.splice(index,1);
-  if(index>=items.length)index=0;
-  el(label==="OPEN"?"openCount":"closedCount").textContent=
-    Number(el(label==="OPEN"?"openCount":"closedCount").textContent)+1;
-  el("pending").textContent=Math.max(0,Number(el("pending").textContent)-1);
-  show();
+  const nextId=items[index+1]?.id||null;
+  setBusy(false);await reload(nextId);
   el("message").textContent="✅ "+label+" disimpan untuk gambar tersebut.";
  }catch(err){el("message").textContent=err.message}
  finally{setBusy(false)}
@@ -166,6 +170,10 @@ el("skip").addEventListener("click",()=>{
  index=(index+1)%items.length;show();el("message").textContent="Gambar dilangkau, belum dilabel.";
 });
 el("refresh").addEventListener("click",()=>reload());
+el("mode").addEventListener("change",()=>{offset=0;reload()});
+el("prevPage").addEventListener("click",()=>{if(offset>0){offset=Math.max(0,offset-120);reload()}});
+el("nextPage").addEventListener("click",()=>{if(el("mode").value!=="pending"&&offset+120<total){offset+=120;reload()}});
+el("clearLabel").addEventListener("click",()=>submit("UNKNOWN"));
 el("capture").addEventListener("click",capture);
 photo.addEventListener("error",()=>{el("message").textContent="Gagal paparkan gambar. Cuba Refresh."});
 reload();
