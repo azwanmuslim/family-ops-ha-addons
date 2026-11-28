@@ -533,7 +533,9 @@ class GateDataset:
             result = predictor.predict(cropped, self, sun)
             state = result.get("prediction", "UNKNOWN")
             model_id = result.get("model_id", "none")
-            model = "mask_vertical_night" if sun == "below_horizon" else "mask_vertical"
+            model = result.get("feature", "mask_vertical")
+            if sun == "below_horizon":
+                model += "_night"
             reason = ("STRUCTURE_CONFIDENT" if state in ("OPEN", "CLOSED")
                       else result.get("reason", "LOW_CONFIDENCE"))
             return state, result.get("margin", 0.0), dict(

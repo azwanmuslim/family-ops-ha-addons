@@ -72,6 +72,30 @@ class ShadowTests(unittest.TestCase):
             self.assertFalse(result["ready_for_manual_review"])
             self.assertEqual(result["status"], "COLLECTING_LABELS")
 
+    def test_rebuild_after_correction_uses_eligible_mask_not_global_winner(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._store(folder)
+            eligible = {"status": "CANDIDATE_PASSED", "model": "edge_gate",
+                        "split": "event_holdout", "open_recall_pct": 100,
+                        "closed_recall_pct": 100, "candidate_scores": {
+                            "mask_vertical": {"open_recall_pct": 80, "closed_recall_pct": 100},
+                            "mask_both": {"open_recall_pct": 95, "closed_recall_pct": 95}}}
+            legacy = dict(eligible, model="mask_vertical", candidate_scores={})
+            with patch.object(store, "shape_benchmark", return_value=legacy):
+                old = store.shadow_predict(frame(True))
+            self.assertNotEqual(old["model_id"], "none")
+            row = next(r for _, r in store.entries() if r["label"] == "OPEN")
+            store.confirm_existing(row["id"], "CLOSED", expected="OPEN")
+            # The old model must remain unusable after changing labels.
+            failed = dict(eligible, split="time_sample_holdout")
+            with patch.object(store, "shape_benchmark", return_value=failed):
+                self.assertEqual(store.shadow_predict(frame(True))["model_id"], "none")
+            with patch.object(store, "shape_benchmark", return_value=eligible):
+                new = store.shadow_predict(frame(True))
+            self.assertEqual(new["feature"], "mask_both")
+            self.assertNotEqual(new["model_id"], old["model_id"])
+            self.assertNotEqual(new["model_id"], "none")
+
     def test_night_and_invalid_frame_never_generate_predictions(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._store(folder)
