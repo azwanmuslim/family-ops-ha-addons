@@ -17,6 +17,7 @@ from ha_gate_structure import _extract_all, _mask_score, _mask_prototypes, _sess
 
 class GateShadow:
     VERSION = "mask_vertical_frozen_v1"
+    FEATURES = ("mask_vertical", "mask_both", "mask_gray")
     FILENAME = "gate_shadow_mask_vertical_v1.model"
 
     def __init__(self, root, lighting="above_horizon"):
@@ -53,6 +54,7 @@ class GateShadow:
             if (blob.get("version") != self.VERSION or
                     not isinstance(blob.get("id"), str) or
                     len(blob["id"]) != 12 or
+                    blob.get("feature", "mask_vertical") not in self.FEATURES or
                     not isinstance(blob.get("means"), dict) or
                     set(blob["means"]) != {"OPEN", "CLOSED"} or
                     not all(len(v) == 1152 for v in blob["means"].values())):
@@ -81,20 +83,25 @@ class GateShadow:
         if self._night_probe is not None:
             rows = [r for r in rows if r.get("sun") == "below_horizon"]
             report = self._night_probe.evaluate(rows)
-            # Validate this exact feature model, not a different winning candidate.
-            candidate = report.get("candidate_scores", {}).get("mask_vertical", {})
-            report = dict(report, model="mask_vertical",
-                          open_recall_pct=candidate.get("open_recall_pct", 0),
-                          closed_recall_pct=candidate.get("closed_recall_pct", 0))
         else:
             report = dataset.shape_benchmark()
+        # Evaluate each supported mask using its own holdout scores, not the
+        # benchmark winner (which may be an unsupported edge feature).
+        scores = report.get("candidate_scores", {})
+        eligible = []
+        for name in self.FEATURES:
+            candidate = scores.get(name)
+            if candidate is None and report.get("model") == name:
+                candidate = report  # backwards-compatible benchmark summaries
+            candidate = candidate or {}
+            a, b = candidate.get("open_recall_pct"), candidate.get("closed_recall_pct")
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)) and min(a, b) >= 90:
+                eligible.append((min(a, b), (a + b) / 2, name == "mask_vertical", name))
         if (report.get("status") != "CANDIDATE_PASSED" or
-                report.get("model") != "mask_vertical" or
-                report.get("split") != "event_holdout" or
-                report.get("open_recall_pct", 0) < 90 or
-                report.get("closed_recall_pct", 0) < 90):
+                report.get("split") != "event_holdout" or not eligible):
             self._last_error = "BASELINE_NOT_ELIGIBLE"
             return None
+        feature_name = max(eligible)[-1]
         train = {}
         for label in ("OPEN", "CLOSED"):
             values = [r for r in rows if r["label"] == label]
@@ -117,7 +124,7 @@ class GateShadow:
                 try:
                     features.append(_extract_all(
                         (self.root / (r["id"] + ".jpg")).read_bytes()
-                    )["mask_vertical"])
+                    )[feature_name])
                 except (OSError, ValueError, TypeError):
                     continue
             if len(features) < 6:
@@ -130,7 +137,7 @@ class GateShadow:
             return None
         model = {
             "version": self.VERSION, "id": secrets.token_hex(6),
-            "frozen_at": time.time(),
+            "frozen_at": time.time(), "feature": feature_name,
             "means": means, "weights": {str(k): v for k, v in weights.items()},
         }
         # Avoid clobbering a model created concurrently by review and advisor.
@@ -166,13 +173,14 @@ class GateShadow:
             if not model:
                 return {"prediction": "UNKNOWN", "reason": self._last_error,
                         "model_id": "none"}
-            vector = _extract_all(cropped)["mask_vertical"]
+            feature_name = model.get("feature", "mask_vertical")
+            vector = _extract_all(cropped)[feature_name]
             means = model["means"]
             weights = {int(k): v for k, v in model["weights"].items()}
             predicted, margin = _mask_score(vector, (means, weights))
             if self.file != self._revision_file():
                 return {"prediction": "UNKNOWN", "reason": "LABELS_CHANGED", "model_id": "none"}
-            return {"prediction": predicted, "margin": margin,
+            return {"prediction": predicted, "margin": margin, "feature": feature_name,
                     "reason": ("SHADOW_ONLY" if predicted != "UNKNOWN" else "LOW_CONFIDENCE"),
                     "model_id": model["id"]}
         except (OSError, ValueError, TypeError, KeyError, IndexError):
