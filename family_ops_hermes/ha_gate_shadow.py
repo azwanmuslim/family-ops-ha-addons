@@ -20,11 +20,14 @@ class GateShadow:
     FEATURES = ("mask_vertical", "mask_both", "mask_gray")
     FILENAME = "gate_shadow_mask_vertical_v1.model"
 
-    def __init__(self, root, lighting="above_horizon"):
+    def __init__(self, root, lighting="above_horizon", provisional=False):
         self.root = Path(root)
         self.lighting = lighting
         self.base_file = self.root / (self.FILENAME if lighting == "above_horizon"
                                  else "gate_active_mask_vertical_night_v1.model")
+        self.provisional = provisional
+        if provisional:
+            self.base_file = self.root / "gate_display_only_day_v1.model"
         self.file = self.base_file
         self._night_probe = GateShapeProbe(self.root) if lighting == "below_horizon" else None
         self.model = None
@@ -95,7 +98,8 @@ class GateShadow:
                 candidate = report  # backwards-compatible benchmark summaries
             candidate = candidate or {}
             a, b = candidate.get("open_recall_pct"), candidate.get("closed_recall_pct")
-            if isinstance(a, (int, float)) and isinstance(b, (int, float)) and min(a, b) >= 90:
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)) and (min(a, b) >= 90 or
+                        (self.provisional and min(a, b) >= 80 and (a + b) / 2 >= 90)):
                 eligible.append((min(a, b), (a + b) / 2, name == "mask_vertical", name))
         if (report.get("status") != "CANDIDATE_PASSED" or
                 report.get("split") != "event_holdout" or not eligible):
@@ -182,7 +186,7 @@ class GateShadow:
                 return {"prediction": "UNKNOWN", "reason": "LABELS_CHANGED", "model_id": "none"}
             return {"prediction": predicted, "margin": margin, "feature": feature_name,
                     "reason": ("SHADOW_ONLY" if predicted != "UNKNOWN" else "LOW_CONFIDENCE"),
-                    "model_id": model["id"]}
+                    "model_id": model["id"], "provisional": self.provisional}
         except (OSError, ValueError, TypeError, KeyError, IndexError):
             return {"prediction": "UNKNOWN", "reason": "SHADOW_INFERENCE_FAILED",
                     "model_id": "none"}

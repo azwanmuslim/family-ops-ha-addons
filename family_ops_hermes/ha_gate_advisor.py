@@ -122,8 +122,9 @@ class GateAdvisor:
         shadow = self.dataset.shadow_stats()  # optional quality telemetry only
         diagnostic = self.vision_diagnostic
         active = diagnostic.get("model_id", "none") != "none"
+        provisional = bool(diagnostic.get("provisional"))
         evaluation = {
-            "status": "ACTIVE_VISION" if active else ("COLLECTING" if min(s["open"], s["closed"]) < 6 else "MODEL_UNAVAILABLE"),
+            "status": ("PROVISIONAL_VISION" if provisional else "ACTIVE_VISION") if active else ("COLLECTING" if min(s["open"], s["closed"]) < 6 else "MODEL_UNAVAILABLE"),
             "reason": diagnostic.get("reason", "NOT_YET_CHECKED"),
             "model": diagnostic.get("model", "none"),
             # Historical benchmark is not a field-accuracy certificate.
@@ -145,6 +146,8 @@ class GateAdvisor:
                     "mode": "suggestion_only",
                     "model_accuracy_verified": False,  # Holdout POC != field safety validation.
                     "evaluation_reason": evaluation["reason"],
+                    "display_only": provisional,
+                    "advisor_suggestions_allowed": active and not provisional,
                 },
             },
             "sensor.hermes_gate_samples": {
@@ -259,7 +262,8 @@ class GateAdvisor:
                                "confidence_margin": round(float(confidence), 3),
                                "model": diagnostic.get("model", "none"),
                                "model_id": diagnostic.get("model_id", "none"),
-                               "is_physical_sensor": False, "controls_actuator": False},
+                               "is_physical_sensor": False, "controls_actuator": False,
+                               "display_only": provisional},
             },
             "sensor.hermes_gate_collection_errors": {
                 "state": str(s["errors"]),
@@ -453,7 +457,10 @@ class GateAdvisor:
                 await self.publish_dashboard(session)
             return
         self.latest=current
-        self.visual_history.append((now,current))
+        if self.vision_diagnostic.get("provisional"):
+            self.visual_history.clear()  # never use display-only estimates in advice
+        else:
+            self.visual_history.append((now,current))
         self.visual_history=self.visual_history[-4:]
         recent=self.visual_history[-3:]
         stable=(len(recent)==3 and recent[-1][0]-recent[0][0]>=210
@@ -464,7 +471,7 @@ class GateAdvisor:
                    gps_approaching=bool(arriving), gps_trend=self.gps_trend)
         with contextlib.suppress(Exception):
             await self.publish_dashboard(session, confidence)
-        if not self.enabled or not stable or self.sent_today>=4:
+        if self.vision_diagnostic.get("provisional") or not self.enabled or not stable or self.sent_today>=4:
             return
         key=None
         message=""

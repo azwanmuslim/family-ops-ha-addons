@@ -69,6 +69,7 @@ class GateDataset:
         self._shape_probe = None
         self._shadow_probe = None
         self._night_active_probe = None
+        self._provisional_probe = None
         if self.enabled:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             self.root.chmod(0o700)
@@ -531,6 +532,14 @@ class GateDataset:
             else:
                 predictor = self._shadow()
             result = predictor.predict(cropped, self, sun)
+            if (sun == "above_horizon" and result.get("model_id") == "none"
+                    and result.get("reason") == "BASELINE_NOT_ELIGIBLE"):
+                from ha_gate_shadow import GateShadow
+                if self._provisional_probe is None:
+                    self._provisional_probe = GateShadow(self.root, provisional=True)
+                fallback = self._provisional_probe.predict(cropped, self, sun)
+                if fallback.get("model_id") != "none":
+                    result = fallback
             state = result.get("prediction", "UNKNOWN")
             model_id = result.get("model_id", "none")
             model = result.get("feature", "mask_vertical")
@@ -538,8 +547,12 @@ class GateDataset:
                 model += "_night"
             reason = ("STRUCTURE_CONFIDENT" if state in ("OPEN", "CLOSED")
                       else result.get("reason", "LOW_CONFIDENCE"))
+            provisional = bool(result.get("provisional"))
+            if provisional:
+                reason = "DISPLAY_ONLY_PROVISIONAL" if state != "UNKNOWN" else "DISPLAY_ONLY_LOW_CONFIDENCE"
             return state, result.get("margin", 0.0), dict(
-                diagnostic, reason=reason, model=model, model_id=model_id)
+                diagnostic, reason=reason, model=model, model_id=model_id,
+                provisional=provisional)
         except (OSError, ValueError, TypeError, KeyError, ImportError):
             return "UNKNOWN", 0.0, dict(diagnostic, reason="INVALID_CAMERA_FRAME")
 
