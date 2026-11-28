@@ -96,6 +96,24 @@ class ShadowTests(unittest.TestCase):
             self.assertNotEqual(new["model_id"], old["model_id"])
             self.assertNotEqual(new["model_id"], "none")
 
+    def test_provisional_day_display_keeps_strict_model_unavailable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = self._store(folder)
+            report = {"status": "CANDIDATE_PASSED", "model": "mask_both",
+                      "split": "event_holdout", "open_recall_pct": 100,
+                      "closed_recall_pct": 81.2}
+            with patch.object(store, "shape_benchmark", return_value=report):
+                self.assertEqual(store.shadow_predict(frame(True))["model_id"], "none")
+                state, margin, diagnostic = store.active_classify(frame(True), "above_horizon")
+                self.assertTrue(diagnostic["provisional"])
+                self.assertNotEqual(diagnostic["model_id"], "none")
+                self.assertEqual(diagnostic["model"], "mask_both")
+                self.assertIn(diagnostic["reason"], ("DISPLAY_ONLY_PROVISIONAL", "DISPLAY_ONLY_LOW_CONFIDENCE"))
+                self.assertFalse((Path(folder) / GateShadow.FILENAME).exists())
+                self.assertTrue((Path(folder) / "gate_display_only_day_v1.model").exists())
+            # Never use a daytime display model for nighttime inference.
+            self.assertEqual(store.shadow_predict(frame(True), "below_horizon")["prediction"], "UNKNOWN")
+
     def test_night_and_invalid_frame_never_generate_predictions(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._store(folder)
