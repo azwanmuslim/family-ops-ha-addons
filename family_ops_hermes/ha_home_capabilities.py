@@ -133,6 +133,8 @@ class HomeTools:
         advisor = getattr(self, "gate_advisor", None)
         visual = ("📷 Visual gate (anggaran CCTV): " + advisor.latest + "\n"
                   if advisor is not None else "📷 Visual gate: belum tersedia\n")
+        if advisor is not None and getattr(advisor, "vision_diagnostic", {}).get("provisional"):
+            visual += "⚠️ Anggaran POC sementara; paparan sahaja, bukan keputusan sah atau cadangan tindakan.\n"
         gates = self.gate_items(states)
         learning = ("\n" + advisor.dataset.summary()) if advisor is not None else ""
         if not gates:
