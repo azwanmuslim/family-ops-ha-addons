@@ -18,6 +18,7 @@ from pathlib import Path
 CAMERA = "camera.nvr_car_porch_cam_sub"
 ROOT = Path("/data/gate_vision")
 INTERVAL = 1800
+MAX_PENDING_PERIODIC = 48
 RETENTION = 14 * 86400
 MAX_BYTES = 80 * 1024 * 1024
 MAX_FILES = 800
@@ -69,14 +70,61 @@ class GateDataset:
         self._shape_probe = None
         self._shadow_probe = None
         self._night_active_probe = None
+        self._night_shape_probe = None
         self._provisional_probe = None
         if self.enabled:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             self.root.chmod(0o700)
             self.prune()
 
-    def due(self):
-        return False  # Periodic training storage paused; live inference remains enabled.
+    def night_benchmark(self):
+        from ha_gate_structure import GateShapeProbe
+        if self._night_shape_probe is None:
+            self._night_shape_probe = GateShapeProbe(self.root)
+        return self._night_shape_probe.evaluate([
+            r for _, r in self.entries() if r.get("roi") == list(ROI)
+            and r.get("verified") and r.get("sun") == "below_horizon"
+            and r.get("label") in ("OPEN", "CLOSED")])
+
+    def capture_policy(self, sun, report=None):
+        """Collect unlabelled frames only while no supported strict candidate qualifies."""
+        if not self.enabled:
+            return "DISABLED"
+        if sun not in ("above_horizon", "below_horizon"):
+            return "LIGHT_UNKNOWN"
+        try:
+            report = report if report is not None else (
+                self.shape_benchmark() if sun == "above_horizon" else self.night_benchmark())
+            from ha_gate_shadow import GateShadow
+            if report.get("status") == "DIAGNOSTIC_ERROR":
+                return "BENCHMARK_ERROR"
+            if report.get("status") == "CANDIDATE_PASSED" and report.get("split") == "event_holdout":
+                for feature_name in GateShadow.FEATURES:
+                    score = report.get("candidate_scores", {}).get(feature_name)
+                    if score is None and report.get("model") == feature_name:
+                        score = report
+                    score = score or {}
+                    a, b = score.get("open_recall_pct"), score.get("closed_recall_pct")
+                    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and min(a, b) >= 90:
+                        return "ACCURACY_OK"
+            pending = sum(r.get("roi") == list(ROI) and not r.get("verified")
+                          and r.get("label") == "UNKNOWN" and r.get("source") == "periodic"
+                          for _, r in self.entries())
+            if pending >= MAX_PENDING_PERIODIC:
+                return "REVIEW_REQUIRED"
+            return "COLLECTING"
+        except (OSError, ValueError, TypeError, KeyError, ImportError):
+            return "BENCHMARK_ERROR"
+
+    def due(self, sun="above_horizon"):
+        if self.capture_policy(sun) != "COLLECTING":
+            return False
+        if self.last_routine is not None and time.monotonic() - self.last_routine < INTERVAL:
+            return False
+        # Persistent throttle across add-on restarts; manual snapshots do not reset it.
+        last = max((float(r.get("timestamp", 0)) for _, r in self.entries()
+                    if r.get("source") == "periodic"), default=0)
+        return time.time() - last >= INTERVAL
 
     def entries(self):
         if not self.enabled:
@@ -157,7 +205,7 @@ class GateDataset:
         return sample_id if return_id else True
 
     def capture_routine(self, jpeg, sun):
-        if not self.due():
+        if not self.due(sun):
             return False
         self.last_routine = time.monotonic()
         try:
@@ -216,7 +264,7 @@ class GateDataset:
         s = self.stats()
         if not s["enabled"]:
             return "📚 Gate learning: OFF"
-        return (f"📚 Gate learning: snapshot manual; 14 hari lokal\n"
+        return (f"📚 Gate learning: adaptive 30 minit jika perlu; 14 hari lokal\n"
                 f"Sampel: {s['samples']} | OPEN disahkan: {s['open']} | "
                 f"CLOSED disahkan: {s['closed']} | Belum disahkan: {s['unverified']}\n"
                 f"Model: {'boleh dinilai' if s['open'] >= 6 and s['closed'] >= 6 else 'belum cukup sampel disahkan'}\n"

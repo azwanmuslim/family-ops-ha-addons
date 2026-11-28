@@ -123,6 +123,8 @@ class GateAdvisor:
         diagnostic = self.vision_diagnostic
         active = diagnostic.get("model_id", "none") != "none"
         provisional = bool(diagnostic.get("provisional"))
+        lighting = diagnostic.get("lighting", "unknown")
+        capture_policy = self.dataset.capture_policy(lighting, shape if lighting == "above_horizon" else None)
         evaluation = {
             "status": ("PROVISIONAL_VISION" if provisional else "ACTIVE_VISION") if active else ("COLLECTING" if min(s["open"], s["closed"]) < 6 else "MODEL_UNAVAILABLE"),
             "reason": diagnostic.get("reason", "NOT_YET_CHECKED"),
@@ -140,8 +142,12 @@ class GateAdvisor:
                 "attributes": {
                     "friendly_name": "Hermes Gate Learning",
                     "icon": "mdi:brain",
-                    "capture_interval_minutes": 0,
-                    "periodic_capture_enabled": False,
+                    "capture_interval_minutes": 30 if capture_policy == "COLLECTING" else 0,
+                    "periodic_capture_enabled": capture_policy == "COLLECTING",
+                    "capture_policy": capture_policy,
+                    "capture_lighting": lighting,
+                    "target_recall_pct": 90,
+                    "adaptive_capture": True,
                     "retention_days": 14,
                     "mode": "suggestion_only",
                     "model_accuracy_verified": False,  # Holdout POC != field safety validation.
@@ -315,7 +321,7 @@ class GateAdvisor:
             if len(image) > 6000000:
                 self.vision_diagnostic["reason"] = "CAMERA_FRAME_TOO_LARGE"
                 return "UNKNOWN", 0.0
-        if self.dataset.due():
+        if self.dataset.due(lighting):
             if self.dataset.capture_routine(image, sun.get("state", "unknown")):
                 print("HERMES_GATE_DATASET: sample_saved=true", flush=True)
         learned, margin, diagnostic = self.dataset.active_classify(image, lighting)

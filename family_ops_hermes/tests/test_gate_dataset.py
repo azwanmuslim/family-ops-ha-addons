@@ -50,10 +50,10 @@ class DatasetTests(unittest.TestCase):
     def test_routine_has_unknown_label_and_throttle(self):
         with tempfile.TemporaryDirectory() as temp:
             store = GateDataset(enabled=True, root=temp)
+            self.assertTrue(store.capture_routine(jpeg(), "above_horizon"))
             self.assertFalse(store.capture_routine(jpeg(), "above_horizon"))
-            self.assertEqual(store.stats()["samples"], 0)
-            store.save(jpeg(), source="manual_request", sun="above_horizon")
-            self.assertFalse(store.capture_routine(jpeg(), "above_horizon"))
+            restarted = GateDataset(enabled=True, root=temp)
+            self.assertFalse(restarted.capture_routine(jpeg(), "above_horizon"))
             stats = store.stats()
             self.assertEqual(stats["samples"], 1)
             self.assertEqual(stats["unverified"], 1)
@@ -74,10 +74,41 @@ class DatasetTests(unittest.TestCase):
                              sun="above_horizon", return_id=True)
             self.assertRegex(sid, r"^[0-9]{8}T[0-9]{6}-[a-f0-9]{8}$")
             self.assertEqual(store.review_queue()[0]["id"], sid)
-            self.assertFalse(store.due())
+            self.assertTrue(store.due())
             self.assertEqual(store.stats()["unverified"], 1)
             self.assertEqual(store.stats()["open"], 0)
             self.assertEqual(store.stats()["closed"], 0)
+
+    def test_adaptive_capture_stops_and_resumes_on_exact_candidate_recall(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            good = {"status": "CANDIDATE_PASSED", "split": "event_holdout",
+                    "model": "edge_gate", "candidate_scores": {
+                        "mask_both": {"open_recall_pct": 90, "closed_recall_pct": 90}}}
+            bad = dict(good, candidate_scores={
+                "mask_both": {"open_recall_pct": 100, "closed_recall_pct": 81.2}})
+            with patch.object(store, "shape_benchmark", return_value=good):
+                self.assertEqual(store.capture_policy("above_horizon"), "ACCURACY_OK")
+                self.assertFalse(store.capture_routine(jpeg(), "above_horizon"))
+            with patch.object(store, "shape_benchmark", return_value=bad):
+                self.assertEqual(store.capture_policy("above_horizon"), "COLLECTING")
+                self.assertTrue(store.capture_routine(jpeg(), "above_horizon"))
+                self.assertFalse(store.due("above_horizon"))
+            with patch.object(store, "night_benchmark", return_value=good):
+                self.assertEqual(store.capture_policy("below_horizon"), "ACCURACY_OK")
+            self.assertEqual(store.capture_policy("unknown"), "LIGHT_UNKNOWN")
+
+    def test_pending_cap_never_blocks_manual_capture(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = GateDataset(enabled=True, root=temp)
+            with patch("ha_gate_dataset.MAX_PENDING_PERIODIC", 1):
+                self.assertTrue(store.capture_routine(jpeg(), "above_horizon"))
+                self.assertEqual(store.capture_policy("above_horizon"), "REVIEW_REQUIRED")
+                self.assertFalse(store.due("above_horizon"))
+                self.assertTrue(store.save(jpeg(), source="manual_request", sun="above_horizon"))
+                row = next(r for _, r in store.entries() if r["source"] == "periodic")
+                store.confirm_existing(row["id"], "CLOSED")
+                self.assertEqual(store.capture_policy("above_horizon"), "COLLECTING")
 
     def test_review_prioritizes_shadow_evidence_without_prediction_leak(self):
         with tempfile.TemporaryDirectory() as temp:
